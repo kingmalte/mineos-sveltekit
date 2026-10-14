@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using MineOS.Application.Interfaces;
 
@@ -38,6 +40,19 @@ public sealed class ApiKeyMiddleware
         if (context.User?.Identity?.IsAuthenticated == true)
         {
             await _next(context);
+            return;
+        }
+
+        // A caller that presented a user token which failed validation (expired,
+        // tampered, garbage) is a user whose session is over — not the service.
+        // Without this, the web app, which sends the service key alongside every
+        // user's token, turned any invalid token into a full admin identity: a
+        // non-admin could set their cookie to junk and be served as admin.
+        var jwt = await context.AuthenticateAsync(JwtBearerDefaults.AuthenticationScheme);
+        if (jwt.Failure != null)
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            await context.Response.WriteAsync("Invalid or expired token.");
             return;
         }
 

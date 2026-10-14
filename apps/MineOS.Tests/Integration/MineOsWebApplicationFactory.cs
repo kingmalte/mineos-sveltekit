@@ -15,7 +15,7 @@ namespace MineOS.Tests.Integration;
 public class MineOsWebApplicationFactory : WebApplicationFactory<Program>
 {
     private readonly string _dbName = $"TestDb_{Guid.NewGuid():N}";
-    private const string TestSigningKey = "test-signing-key-at-least-32-characters-long!!";
+    internal const string TestSigningKey = "test-signing-key-at-least-32-characters-long!!";
 
     /// <summary>
     /// Every instance gets its own throwaway server root. Without this the tests

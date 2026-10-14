@@ -49,6 +49,12 @@ function wsProxyPlugin(): Plugin {
 				if (!shouldProxy(path)) return; // Let Vite handle its own HMR WebSocket
 
 				const token = parseAuthToken(req.headers.cookie);
+				// Same rule as server.js: no login, no upstream (it carries the API key).
+				if (!token) {
+					socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+					socket.destroy();
+					return;
+				}
 				const targetUrl = `${WS_BASE}${path}${url.search}`;
 
 				console.log(`[WS Proxy Dev] Connecting to: ${targetUrl}`);

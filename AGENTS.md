@@ -59,6 +59,16 @@ The API is protected in layers. Keep them intact:
 - **`ApiKeyMiddleware`**: a valid `X-Api-Key` authenticates as an **admin** identity.
   The middleware order in `Program.cs` is `UseAuthentication → ApiKeyMiddleware →
   UseAuthorization` — do not reorder it.
+  The key counts **only when no user token was sent**: a request whose JWT fails
+  validation (expired, forged, junk) gets 401, never the admin fallback. The web
+  app sends the key next to every user's token, so that fallback would make any
+  user an admin by sending a broken token.
+- **Web `/api` gate** (`apps/web/src/hooks.server.ts`): the SvelteKit proxies
+  attach the key to everything they forward, so `/api/*` without a login cookie
+  is refused with 401 unless listed in `src/lib/server/publicApiRoutes.ts`
+  (login, logout, the client-pack download link). Anything on that list is
+  served as admin — keep it short and exact. The WebSocket proxy in `server.js`
+  likewise refuses upgrades without a login cookie.
 - **`ServerAccessFilter`**: every **server-scoped** route (`/servers/{name}/...`,
   players, worlds, performance, console) must carry the per-server ACL check. If you
   add a server-scoped endpoint group, add the filter — a non-admin must not reach a

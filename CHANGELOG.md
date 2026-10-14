@@ -40,6 +40,19 @@ Pre-releases publish `:preview` Docker images and are not intended for productio
 
 ### Fixed
 
+- **Security: the web app no longer grants admin rights to visitors who are not
+  logged in.** Its `/api` proxies send the service API key with every request,
+  and the API treats that key as a full admin whenever no valid user token comes
+  with it. Without a login cookie, anyone who could reach the web UI could list
+  users, read settings and create an admin account; a logged-in non-admin could
+  get the same by setting their cookie to an invalid value. Now the web app
+  refuses `/api/*` without a login cookie (except login, logout and client-pack
+  download links), and the API answers 401 to a token that fails validation
+  instead of falling back to the key. The admin shell WebSocket was not affected
+  (it never accepted the key), and its proxy now also refuses visitors who are
+  not logged in. **Upgrade recommended**; if you exposed the web UI, check
+  *Users* for accounts you did not create.
+
 - **The web UI no longer freezes until reloaded.** Every live view (console,
   logs, notifications, jobs, dashboard, install progress) held its own
   EventSource, and browsers allow only six HTTP/1.1 connections per host across
