@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SharedEventSource } from '$lib/utils/sharedEventSource';
 	import type { SystemNotification, JobStatus, ModpackInstallProgress, ForgeInstallStatus } from '$lib/api/types';
 	import { onMount } from 'svelte';
 	import { uploads, type UploadEntry } from '$lib/stores/uploads';
@@ -14,8 +15,8 @@
 	let isOpen = $state(false);
 	let loading = $state(false);
 	let showDismissed = $state(false);
-	let notificationsSource: EventSource | null = null;
-	let jobsSource: EventSource | null = null;
+	let notificationsSource: SharedEventSource | null = null;
+	let jobsSource: SharedEventSource | null = null;
 
 	const activeUploads = $derived($uploads.filter((u) => u.status === 'uploading'));
 	const allActiveInstalls = $derived(
@@ -46,7 +47,7 @@
 
 	function connectNotificationStream() {
 		notificationsSource?.close();
-		notificationsSource = new EventSource('/api/notifications/stream');
+		notificationsSource = new SharedEventSource('/api/notifications/stream');
 		notificationsSource.onmessage = (event) => {
 			try {
 				notifications = JSON.parse(event.data);
@@ -68,7 +69,7 @@
 
 	function connectJobsStream() {
 		jobsSource?.close();
-		jobsSource = new EventSource('/api/jobs/stream');
+		jobsSource = new SharedEventSource('/api/jobs/stream');
 		jobsSource.onmessage = (event) => {
 			try {
 				const data = JSON.parse(event.data);

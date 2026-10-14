@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SharedEventSource } from '$lib/utils/sharedEventSource';
 	import { onMount } from 'svelte';
 	import '@xterm/xterm/css/xterm.css';
 	import { modal } from '$lib/stores/modal';
@@ -84,7 +85,7 @@
 	let terminal: TerminalType | null = $state(null);
 	let fitAddon: FitAddonType | null = null;
 	let resizeObserver: ResizeObserver | null = null;
-	let eventSource: EventSource | null = null;
+	let eventSource: SharedEventSource | null = null;
 	let command = $state('');
 	let sending = $state(false);
 	let clearingLogs = $state(false);
@@ -92,7 +93,7 @@
 	let heartbeatError = $state<string | null>(data.heartbeat.error);
 	let watchdog = $state(data.watchdog.data ?? null);
 	let watchdogError = $state<string | null>(data.watchdog.error);
-	let heartbeatSource: EventSource | null = null;
+	let heartbeatSource: SharedEventSource | null = null;
 	let heartbeatStatus = $derived((heartbeat?.status ?? '').toLowerCase());
 	let isRunning = $derived(heartbeatStatus === 'up' || heartbeatStatus === 'running');
 	let memoryHistory = $state<number[]>([]);
@@ -280,7 +281,7 @@
 					terminal?.writeln(`\x1b[1;33m=== ${loader.name} Installation in Progress ===\x1b[0m`);
 					terminal?.writeln(`\x1b[90m${install.currentStep || 'Starting...'}\x1b[0m`);
 
-					const source = new EventSource(activeInstall.streamUrl);
+					const source = new SharedEventSource(activeInstall.streamUrl);
 					source.onmessage = (event) => {
 						try {
 							const d = JSON.parse(event.data);
@@ -326,7 +327,7 @@
 	function connectToLogs() {
 		if (!data.server) return;
 
-		eventSource = new EventSource(`/api/servers/${encodeURIComponent(data.server.name)}/console/stream`);
+		eventSource = new SharedEventSource(`/api/servers/${encodeURIComponent(data.server.name)}/console/stream`);
 
 		eventSource.onmessage = (event) => {
 			try {
@@ -357,7 +358,7 @@
 	function connectToHeartbeat() {
 		if (!data.server) return;
 
-		heartbeatSource = new EventSource(`/api/servers/${encodeURIComponent(data.server.name)}/heartbeat/stream`);
+		heartbeatSource = new SharedEventSource(`/api/servers/${encodeURIComponent(data.server.name)}/heartbeat/stream`);
 		heartbeatSource.onmessage = (event) => {
 			try {
 				heartbeat = JSON.parse(event.data);

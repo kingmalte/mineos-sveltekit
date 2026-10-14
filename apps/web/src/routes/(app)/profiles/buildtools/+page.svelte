@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SharedEventSource } from '$lib/utils/sharedEventSource';
 	import { onDestroy, onMount } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
 	import { modal } from '$lib/stores/modal';
@@ -14,7 +15,7 @@
 	let runs = $state<any[]>([]);
 	let runsLoading = $state(false);
 	let logContainer: HTMLDivElement | null = null;
-	let eventSource: EventSource | null = null;
+	let eventSource: SharedEventSource | null = null;
 	let loadRunsTimeout: ReturnType<typeof setTimeout> | null = null;
 	let hasInvalidated = $state(false);
 
@@ -105,7 +106,7 @@
 
 	function openStream(id: string) {
 		eventSource?.close();
-		eventSource = new EventSource(`/api/host/buildtools/${id}/stream`);
+		eventSource = new SharedEventSource(`/api/host/buildtools/${id}/stream`);
 
 		eventSource.onmessage = (event) => {
 			try {

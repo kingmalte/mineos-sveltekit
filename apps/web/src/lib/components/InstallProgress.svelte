@@ -1,5 +1,6 @@
 <!-- apps/web/src/lib/components/InstallProgress.svelte -->
 <script lang="ts">
+	import { SharedEventSource } from '$lib/utils/sharedEventSource';
 	import ProgressBar from './ProgressBar.svelte';
 
 	import { goto } from '$app/navigation';
@@ -36,7 +37,7 @@
 	let completed = $state(false);
 	let error = $state('');
 
-	let eventSource: EventSource | null = null;
+	let eventSource: SharedEventSource | null = null;
 
 	function markCompleted() {
 		if (completed) return; // Only fire once
@@ -77,7 +78,7 @@
 			if (data.currentStep) currentStep = data.currentStep;
 		}).catch(() => {});
 
-		eventSource = new EventSource(streamUrl);
+		eventSource = new SharedEventSource(streamUrl);
 		eventSource.onmessage = (event) => {
 			if (completed) return; // Already done — ignore further messages
 			try {

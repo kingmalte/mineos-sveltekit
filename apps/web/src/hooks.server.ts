@@ -3,6 +3,7 @@ import { env } from '$env/dynamic/private';
 import { isFormContentType, isTrustedOrigin } from '$lib/server/originCheck';
 import { renderOriginErrorPage } from '$lib/server/originErrorPage';
 import { stripPreloadHeader } from '$lib/server/preloadHeader';
+import { refreshSessionIfDue } from '$lib/server/sessionRefresh';
 
 // Replaces SvelteKit's csrf.checkOrigin (disabled in svelte.config.js) with a
 // dynamic same-origin check so any IP/DNS name pointing at this server works
@@ -37,6 +38,12 @@ export const handle: Handle = async ({ event, resolve }) => {
 				headers: { 'content-type': 'text/html; charset=utf-8' }
 			});
 		}
+	}
+
+	// Sub-requests (event.fetch from a load) inherit the parent's cookies, so
+	// the parent request has already renewed the session if it was due.
+	if (!event.isSubRequest) {
+		await refreshSessionIfDue(event.cookies, event.url);
 	}
 
 	// Dropped because the preload header does not fit a default reverse-proxy

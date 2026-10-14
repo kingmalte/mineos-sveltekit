@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SharedEventSource } from '$lib/utils/sharedEventSource';
 	import { invalidateAll } from '$app/navigation';
 	import { modal } from '$lib/stores/modal';
 	import { formatBytes, formatDate } from '$lib/utils/formatting';
@@ -11,7 +12,7 @@
 	let backups = $state<any[]>([]);
 	let jobStatus = $state<JobProgress | null>(null);
 	let jobError = $state<string | null>(null);
-	let jobEventSource: EventSource | null = null;
+	let jobEventSource: SharedEventSource | null = null;
 
 	type JobProgress = {
 		jobId: string;
@@ -128,7 +129,7 @@
 			jobEventSource.close();
 		}
 
-		jobEventSource = new EventSource(`/api/jobs/${jobId}/stream`);
+		jobEventSource = new SharedEventSource(`/api/jobs/${jobId}/stream`);
 		jobEventSource.onmessage = (event) => {
 			try {
 				jobStatus = JSON.parse(event.data) as JobProgress;

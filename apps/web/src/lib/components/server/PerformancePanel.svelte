@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SharedEventSource } from '$lib/utils/sharedEventSource';
 	import { onMount } from 'svelte';
 	import type { ServerPanelData } from './panelData';
 	import type { loadPerformance } from '$lib/loads/performance';
@@ -11,7 +12,7 @@
 
 	let samples = $state<PerformanceSample[]>([]);
 	let streamStatus = $state<'connecting' | 'live' | 'stopped'>('connecting');
-	let streamSource: EventSource | null = null;
+	let streamSource: SharedEventSource | null = null;
 	let streamRetry: ReturnType<typeof setTimeout> | null = null;
 	let sparkStatus = $state<typeof data.spark.data | null>(null);
 	let sparkError = $state<string | null>(null);
@@ -82,7 +83,7 @@
 	function connectStream() {
 		if (!data.server) return;
 		streamSource?.close();
-		streamSource = new EventSource(`/api/servers/${encodeURIComponent(data.server.name)}/performance/streaming`);
+		streamSource = new SharedEventSource(`/api/servers/${encodeURIComponent(data.server.name)}/performance/streaming`);
 		streamStatus = 'connecting';
 
 		streamSource.onmessage = (event) => {

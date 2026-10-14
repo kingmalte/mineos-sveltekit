@@ -43,6 +43,20 @@ public sealed class AuthService : IAuthService
             return null;
         }
 
+        return CreateResult(user);
+    }
+
+    public async Task<LoginResultDto?> RefreshAsync(int userId, CancellationToken cancellationToken)
+    {
+        var user = await _db.Users
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+
+        return user == null || !user.IsActive ? null : CreateResult(user);
+    }
+
+    private LoginResultDto CreateResult(MineOS.Domain.Entities.User user)
+    {
         var token = _jwtTokenService.CreateToken(user);
         return new LoginResultDto(
             AccessToken: token,

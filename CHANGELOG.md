@@ -40,6 +40,22 @@ Pre-releases publish `:preview` Docker images and are not intended for productio
 
 ### Fixed
 
+- **The web UI no longer freezes until reloaded.** Every live view (console,
+  logs, notifications, jobs, dashboard, install progress) held its own
+  EventSource, and browsers allow only six HTTP/1.1 connections per host across
+  all tabs — the logs page alone used five, a second tab used up the rest, and
+  every further request queued forever. All streams in a tab now share one
+  connection (`/api/events`), multiplexed server-side over the existing `/api`
+  proxy routes with the user's own cookies, so the API's access checks are
+  unchanged.
+- **Sessions no longer end every hour.** The login token was never renewed, so
+  users were logged out `Auth:Jwt:ExpiresMinutes` after signing in regardless
+  of activity. The web app now renews it through the new JWT-only
+  `POST /api/v1/auth/refresh` once it is past half its lifetime, and open tabs
+  check in every five minutes. Refresh re-reads the user, so a deactivated
+  account is signed out at its next renewal. If the API is unreachable, pages
+  now show a retryable 503 instead of bouncing between `/login` and the app.
+
 - **Pages behind a reverse proxy no longer return 502.** SvelteKit mirrors every preload
   `<link>` into a `Link:` response header; on MineOS pages that one header ran to ~3.9 KB,
   and the whole header block measured 4090 bytes against the 4 KB `proxy_buffer_size` that

@@ -33,7 +33,12 @@ public sealed class JwtTokenService : IJwtTokenService
             new Claim(ClaimTypes.Name, user.Username),
             new Claim(ClaimTypes.Role, user.Role),
             new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
-            new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString())
+            new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+            // Lets the web app tell how far through its lifetime a token is, so
+            // it can renew an active session before it runs out.
+            new Claim(JwtRegisteredClaimNames.Iat,
+                EpochTime.GetIntDate(DateTime.UtcNow).ToString(),
+                ClaimValueTypes.Integer64)
         };
 
         var token = new JwtSecurityToken(

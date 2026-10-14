@@ -1,5 +1,6 @@
 import { redirect, fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
+import { setAuthCookie } from '$lib/server/sessionRefresh';
 
 export const load: PageServerLoad = async ({ cookies }) => {
 	const token = cookies.get('auth_token');
@@ -36,17 +37,9 @@ export const actions = {
 
 			const result = await response.json();
 
-			const secure = url.protocol === 'https:';
-
 			// Set httpOnly cookie with the JWT token
 			// User info is loaded server-side via /api/auth/me in layout.server.ts
-			cookies.set('auth_token', result.accessToken, {
-				httpOnly: true,
-				secure,
-				sameSite: 'lax',
-				maxAge: result.expiresInSeconds,
-				path: '/'
-			});
+			setAuthCookie(cookies, url, result.accessToken, result.expiresInSeconds);
 
 			throw redirect(303, '/servers');
 		} catch (err) {

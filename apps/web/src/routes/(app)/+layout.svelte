@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/stores';
+	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import type { LayoutData } from './$types';
 	import TopBar from '$lib/components/TopBar.svelte';
@@ -22,6 +23,34 @@
 	$effect(() => {
 		$page.url.pathname;
 		sidebarOpen = false;
+	});
+
+	// A page that is only being watched (live console, dashboard) makes no
+	// requests of its own, so the server never gets a chance to renew the
+	// session and it ran out mid-watch. Check in every few minutes: the request
+	// renews the token when due (hooks.server.ts) and notices when the session
+	// really has ended, instead of the next click failing.
+	const SESSION_CHECK_MS = 5 * 60 * 1000;
+
+	async function checkSession() {
+		try {
+			const res = await fetch('/api/auth/me', { cache: 'no-store' });
+			if (res.status === 401) window.location.href = '/login';
+		} catch {
+			// Offline or API restarting; try again next time.
+		}
+	}
+
+	onMount(() => {
+		const timer = setInterval(checkSession, SESSION_CHECK_MS);
+		const onVisible = () => {
+			if (document.visibilityState === 'visible') void checkSession();
+		};
+		document.addEventListener('visibilitychange', onVisible);
+		return () => {
+			clearInterval(timer);
+			document.removeEventListener('visibilitychange', onVisible);
+		};
 	});
 
 	const logoSrc = $derived(
