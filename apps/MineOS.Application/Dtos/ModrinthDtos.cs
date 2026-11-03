@@ -47,7 +47,8 @@ public record ModrinthVersionFileDto(
     string Url,
     string FileName,
     long Size,
-    bool Primary);
+    bool Primary,
+    string? Sha1 = null);
 
 public record ModrinthDependencyDto(
     string? ProjectId,

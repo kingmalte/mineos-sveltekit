@@ -1,3 +1,4 @@
+using System.Formats.Tar;
 using System.IO.Compression;
 using System.Net;
 using System.Text.Json;
@@ -106,7 +107,10 @@ public sealed class ModService : IModService
         return Task.FromResult<IReadOnlyList<InstalledModDto>>(mods);
     }
 
-    public async Task SaveModAsync(string serverName, string fileName, Stream content, CancellationToken cancellationToken)
+    public Task SaveModAsync(string serverName, string fileName, Stream content, CancellationToken cancellationToken) =>
+        SaveModFilesAsync(serverName, fileName, content, cancellationToken);
+
+    public async Task<IReadOnlyList<string>> SaveModFilesAsync(string serverName, string fileName, Stream content, CancellationToken cancellationToken)
     {
         var serverPath = GetServerPath(serverName);
         if (!Directory.Exists(serverPath))
@@ -118,59 +122,127 @@ public sealed class ModService : IModService
         var modsPath = EnsureModsPath(serverName);
         var lowerName = safeName.ToLowerInvariant();
 
-        // Check if this is an archive file that needs extraction
         var isZip = lowerName.EndsWith(".zip");
         var isTar = lowerName.EndsWith(".tar") || lowerName.EndsWith(".tar.gz") || lowerName.EndsWith(".tgz");
+        IReadOnlyList<string> saved;
 
-        if (isZip || isTar)
+        if (isZip)
         {
-            // Save archive to a temporary location
-            var tempPath = Path.Combine(Path.GetTempPath(), $"mineos_upload_{Guid.NewGuid():N}{Path.GetExtension(safeName)}");
+            // ZipArchive needs a seekable stream; keep the upload in a private temp file.
+            var tempPath = Path.Combine(Path.GetTempPath(), $"mineos_upload_{Guid.NewGuid():N}.zip");
             try
             {
-                await using (var tempFile = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                await using (var tempFile = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                 {
                     await content.CopyToAsync(tempFile, cancellationToken);
                 }
-
-                // Extract archive contents
-                if (isZip)
-                {
-                    await ExtractZipToModsAsync(tempPath, modsPath, cancellationToken);
-                }
-                else if (isTar)
-                {
-                    await ExtractTarToModsAsync(tempPath, modsPath, cancellationToken);
-                }
-
-                _logger.LogInformation("Extracted archive {FileName} for server {ServerName}", safeName, serverName);
+                saved = await ExtractZipToModsAsync(tempPath, modsPath, cancellationToken);
             }
             finally
             {
-                // Clean up temp file
-                if (File.Exists(tempPath))
-                {
-                    File.Delete(tempPath);
-                }
+                TryDeleteFile(tempPath);
             }
+            _logger.LogInformation("Extracted archive {FileName} for server {ServerName}", safeName, serverName);
+        }
+        else if (isTar)
+        {
+            saved = await ExtractTarToModsAsync(content, gzipped: !lowerName.EndsWith(".tar"), modsPath, cancellationToken);
+            _logger.LogInformation("Extracted archive {FileName} for server {ServerName}", safeName, serverName);
         }
         else
         {
-            // Regular file (JAR) - save directly
-            var targetPath = Path.Combine(modsPath, safeName);
-            await using var target = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None);
-            await content.CopyToAsync(target, cancellationToken);
-            await OwnershipHelper.ChangeOwnershipAsync(
-                targetPath,
-                _hostOptions.RunAsUid,
-                _hostOptions.RunAsGid,
-                _logger,
-                cancellationToken);
+            await WriteModFileAsync(Path.Combine(modsPath, safeName),
+                (target, ct) => content.CopyToAsync(target, ct), cancellationToken);
             _logger.LogInformation("Uploaded mod {FileName} for server {ServerName}", safeName, serverName);
+            saved = new[] { safeName };
         }
 
         MarkRestartRequired(serverPath);
+        return saved;
     }
+
+    public Task<ModDeleteBatchResultDto> DeleteModsAsync(
+        string serverName, IReadOnlyList<string> fileNames, CancellationToken cancellationToken)
+    {
+        var serverPath = GetServerPath(serverName);
+        if (!Directory.Exists(serverPath))
+        {
+            throw new DirectoryNotFoundException($"Server '{serverName}' not found");
+        }
+
+        // Validate all names before touching anything: a bad name aborts the whole
+        // request instead of leaving it half done.
+        var names = fileNames.Select(ValidateFileName).Distinct(StringComparer.Ordinal).ToList();
+        var modsPath = GetModsPath(serverName);
+        var deleted = new List<string>();
+        var failed = new List<ModOperationFailureDto>();
+
+        foreach (var name in names)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var path = Path.Combine(modsPath, name);
+            try
+            {
+                if (!File.Exists(path) && new FileInfo(path).LinkTarget == null)
+                {
+                    failed.Add(new ModOperationFailureDto(name, "Not found"));
+                    continue;
+                }
+                File.Delete(path);
+                deleted.Add(name);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                failed.Add(new ModOperationFailureDto(name, ex.Message));
+            }
+        }
+
+        if (deleted.Count > 0)
+        {
+            MarkRestartRequired(serverPath);
+        }
+        _logger.LogInformation("Deleted {Count} mod(s) for server {ServerName}", deleted.Count, serverName);
+        return Task.FromResult(new ModDeleteBatchResultDto(deleted, failed));
+    }
+
+    public async Task MoveModToClientAsync(string serverName, string fileName, CancellationToken cancellationToken)
+    {
+        var serverPath = GetServerPath(serverName);
+        if (!Directory.Exists(serverPath))
+        {
+            throw new DirectoryNotFoundException($"Server '{serverName}' not found");
+        }
+
+        var safeName = ValidateFileName(fileName);
+        var source = Path.Combine(GetModsPath(serverName), safeName);
+        if (!File.Exists(source) || new FileInfo(source).LinkTarget != null)
+        {
+            throw new FileNotFoundException($"Mod '{safeName}' not found");
+        }
+
+        // A disabled mod becomes an enabled client mod: the client should load it.
+        var clientName = ComputeToggleName(safeName, enabled: true);
+        var target = Path.Combine(EnsureClientModsPath(serverName), clientName);
+        if (File.Exists(target) || new FileInfo(target).LinkTarget != null)
+        {
+            throw new InvalidOperationException($"A client mod named {clientName} already exists.");
+        }
+
+        File.Move(source, target);
+        await OwnershipHelper.ChangeOwnershipAsync(
+            target, _hostOptions.RunAsUid, _hostOptions.RunAsGid, _logger, cancellationToken);
+        MarkRestartRequired(serverPath);
+        _logger.LogInformation("Moved {FileName} to client mods for server {ServerName}", safeName, serverName);
+    }
+
+    /// <summary>Atomic, owner-correct write of one file into a mods folder (see <see cref="AtomicFile"/>).</summary>
+    private Task WriteModFileAsync(
+        string targetPath, Func<Stream, CancellationToken, Task> writeContent, CancellationToken cancellationToken) =>
+        AtomicFile.WriteAsync(
+            targetPath,
+            writeContent,
+            (temp, ct) => OwnershipHelper.ChangeOwnershipAsync(temp, _hostOptions.RunAsUid, _hostOptions.RunAsGid, _logger, ct),
+            cancellationToken);
 
     public Task DeleteModAsync(string serverName, string fileName, CancellationToken cancellationToken)
     {
@@ -204,8 +276,9 @@ public sealed class ModService : IModService
         }
 
         var safeName = ValidateFileName(fileName);
-        var modsPath = GetModsPath(serverName);
-        var targetPath = Path.Combine(modsPath, safeName);
+        // Follows a link at the file, but only to somewhere inside the mods folder:
+        // a planted mods/x.jar -> /etc/shadow must not become a download.
+        var targetPath = ContainedPath.Resolve(GetModsPath(serverName), safeName, followFinal: true);
 
         if (!File.Exists(targetPath))
         {
@@ -262,10 +335,7 @@ public sealed class ModService : IModService
         var safeName = ValidateFileName(fileName);
         var clientModsPath = EnsureClientModsPath(serverName);
         var targetPath = Path.Combine(clientModsPath, safeName);
-        await using var target = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None);
-        await content.CopyToAsync(target, cancellationToken);
-        await OwnershipHelper.ChangeOwnershipAsync(
-            targetPath, _hostOptions.RunAsUid, _hostOptions.RunAsGid, _logger, cancellationToken);
+        await WriteModFileAsync(targetPath, (target, ct) => content.CopyToAsync(target, ct), cancellationToken);
         _logger.LogInformation("Uploaded client mod {FileName} for server {ServerName}", safeName, serverName);
     }
 
@@ -308,7 +378,7 @@ public sealed class ModService : IModService
         }
 
         var safeName = ValidateFileName(fileName);
-        var targetPath = Path.Combine(GetClientModsPath(serverName), safeName);
+        var targetPath = ContainedPath.Resolve(GetClientModsPath(serverName), safeName, followFinal: true);
 
         if (!File.Exists(targetPath))
         {
@@ -957,10 +1027,14 @@ public sealed class ModService : IModService
             }
 
             var destination = Path.Combine(modsPath, entry.Name);
-            using var entryStream = entry.Open();
-            using var fileStream = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None);
-            entryStream.CopyTo(fileStream);
-            OwnershipHelper.TrySetOwnership(destination, _hostOptions.RunAsUid, _hostOptions.RunAsGid, _logger);
+            AtomicFile.Write(
+                destination,
+                target =>
+                {
+                    using var entryStream = entry.Open();
+                    entryStream.CopyTo(target);
+                },
+                temp => OwnershipHelper.TrySetOwnership(temp, _hostOptions.RunAsUid, _hostOptions.RunAsGid, _logger));
 
             state.RecordInstalledFile(destination);
             state.AppendOutput($"Extracted mod: {entry.Name}");
@@ -1970,23 +2044,26 @@ public sealed class ModService : IModService
                 var totalBytes = response.Content.Headers.ContentLength;
 
                 await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
-                await using var target = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None);
 
-                var buffer = new byte[8192];
-                long totalRead = 0;
-                int read;
-                while ((read = await source.ReadAsync(buffer, cancellationToken)) > 0)
+                // Atomic: a failed or retried download never leaves a truncated jar,
+                // and never writes through a link sitting at the target.
+                await AtomicFile.WriteAsync(targetPath, async (target, ct) =>
                 {
-                    await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
-                    totalRead += read;
-                    progressCallback?.Invoke(totalRead, totalBytes);
-                }
+                    var buffer = new byte[8192];
+                    long totalRead = 0;
+                    int read;
+                    while ((read = await source.ReadAsync(buffer, ct)) > 0)
+                    {
+                        await target.WriteAsync(buffer.AsMemory(0, read), ct);
+                        totalRead += read;
+                        progressCallback?.Invoke(totalRead, totalBytes);
+                    }
+                }, beforeCommit: null, cancellationToken);
 
                 return;
             }
             catch (Exception ex) when (IsRetryableDownloadException(ex) && attempt < DownloadRetryDelays.Length)
             {
-                TryDeleteFile(targetPath);
                 var delay = DownloadRetryDelays[attempt];
                 onRetry?.Invoke($"Download failed ({FormatDownloadError(ex)}). Retrying in {delay.TotalSeconds:0}s...");
                 await Task.Delay(delay, cancellationToken);
@@ -2143,16 +2220,21 @@ public sealed class ModService : IModService
     private string GetServerPath(string serverName) =>
         Path.Combine(_hostOptions.BaseDirectory, _hostOptions.ServersPathSegment, serverName);
 
+    // Resolved through ContainedPath: a mods folder that is a symlink out of the
+    // server directory is refused instead of becoming a place to write as root.
     private string GetModsPath(string serverName) =>
-        Path.Combine(GetServerPath(serverName), "mods");
+        ContainedPath.Resolve(GetServerPath(serverName), "mods", followFinal: true);
 
     private string GetClientModsPath(string serverName) =>
-        Path.Combine(GetServerPath(serverName), "client-mods", "mods");
+        ContainedPath.Resolve(GetServerPath(serverName), "client-mods/mods", followFinal: true);
 
     private string EnsureClientModsPath(string serverName)
     {
         var path = GetClientModsPath(serverName);
         Directory.CreateDirectory(path);
+        // Two levels (client-mods/mods): chown both, or client-mods/ stays root-owned
+        // and the server user cannot write next to its own client mods.
+        OwnershipHelper.TrySetOwnership(Path.GetDirectoryName(path)!, _hostOptions.RunAsUid, _hostOptions.RunAsGid, _logger);
         OwnershipHelper.TrySetOwnership(path, _hostOptions.RunAsUid, _hostOptions.RunAsGid, _logger);
         return path;
     }
@@ -2197,9 +2279,11 @@ public sealed class ModService : IModService
 
         var clientModsRoot = Path.Combine(GetServerPath(serverName), "client-mods");
         Directory.CreateDirectory(clientModsRoot);
+        OwnershipHelper.TrySetOwnership(clientModsRoot, _hostOptions.RunAsUid, _hostOptions.RunAsGid, _logger);
         var path = GetClientModSourceMapPath(serverName);
         var json = JsonSerializer.Serialize(map, new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(path, json, cancellationToken);
+        OwnershipHelper.TrySetOwnership(path, _hostOptions.RunAsUid, _hostOptions.RunAsGid, _logger);
     }
 
     private string EnsureModsPath(string serverName)
@@ -2248,21 +2332,21 @@ public sealed class ModService : IModService
         return safeName;
     }
 
+    /// <summary>
+    /// A path from an archive or manifest, inside <paramref name="rootPath"/> also after
+    /// symbolic links are followed. The old textual check let an override like
+    /// config/x.toml write through a planted "config -> /etc" link as root.
+    /// </summary>
     private static string GetSafePath(string rootPath, string relativePath)
     {
-        var root = Path.GetFullPath(rootPath);
-        var combined = Path.Combine(root, relativePath.TrimStart('/', '\\'));
-        var normalized = Path.GetFullPath(combined);
-
-        // Compare with a trailing separator so a sibling directory whose name merely
-        // starts with rootPath cannot pass the check.
-        if (normalized != root &&
-            !normalized.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        try
         {
-            throw new ArgumentException("Invalid override path");
+            return ContainedPath.Resolve(rootPath, relativePath.Replace('\\', '/'), followFinal: true);
         }
-
-        return normalized;
+        catch (ArgumentException)
+        {
+            throw new ArgumentException($"Invalid override path: {relativePath}");
+        }
     }
 
     private static bool IsModPath(string path)
@@ -2745,99 +2829,90 @@ public sealed class ModService : IModService
                ?? version.Files.FirstOrDefault();
     }
 
-    private async Task ExtractZipToModsAsync(string zipPath, string modsPath, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<string>> ExtractZipToModsAsync(string zipPath, string modsPath, CancellationToken cancellationToken)
     {
+        var saved = new List<string>();
         using var archive = ZipFile.OpenRead(zipPath);
         foreach (var entry in archive.Entries)
         {
-            // Skip directories and non-JAR files
+            // Only .jar files, flattened to their file name: no directory structure
+            // (and so no traversal) from the archive reaches the disk.
             if (string.IsNullOrEmpty(entry.Name) || !entry.Name.EndsWith(".jar", StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
 
-            // Extract only the file name (ignore directory structure)
             var targetPath = Path.Combine(modsPath, entry.Name);
-
-            // Extract the file
-            entry.ExtractToFile(targetPath, overwrite: true);
-
-            // Set ownership
-            await OwnershipHelper.ChangeOwnershipAsync(
-                targetPath,
-                _hostOptions.RunAsUid,
-                _hostOptions.RunAsGid,
-                _logger,
-                cancellationToken);
+            await WriteModFileAsync(targetPath, async (target, ct) =>
+            {
+                await using var source = entry.Open();
+                await source.CopyToAsync(target, ct);
+            }, cancellationToken);
 
             _logger.LogInformation("Extracted JAR: {FileName}", entry.Name);
+            saved.Add(entry.Name);
         }
+
+        return saved;
     }
 
-    private async Task ExtractTarToModsAsync(string tarPath, string modsPath, CancellationToken cancellationToken)
+    /// <summary>
+    /// Copies the .jar files of a tar/tar.gz upload into the mods folder.
+    /// </summary>
+    /// <remarks>
+    /// This used to run <c>tar -x</c> as root into a temp directory and then copy every
+    /// <c>*.jar</c> it found with File.Copy - which follows symbolic links. An archive
+    /// holding a link named <c>x.jar</c> pointing at any host file put that file into
+    /// the mods folder, where anyone who can view the server could download it.
+    /// TarReader hands over entries without touching the disk; only regular files are
+    /// written, so links (symbolic or hard) and device entries never take effect.
+    /// </remarks>
+    internal async Task<IReadOnlyList<string>> ExtractTarToModsAsync(Stream archive, bool gzipped, string modsPath, CancellationToken cancellationToken)
     {
-        // For tar/tar.gz extraction, we'll shell out to tar command (more reliable on Linux)
-        var isGzipped = tarPath.EndsWith(".gz", StringComparison.OrdinalIgnoreCase) ||
-                        tarPath.EndsWith(".tgz", StringComparison.OrdinalIgnoreCase);
-
-        // Create a temp directory for extraction
-        var tempExtractPath = Path.Combine(Path.GetTempPath(), $"mineos_extract_{Guid.NewGuid():N}");
-        Directory.CreateDirectory(tempExtractPath);
-
+        var saved = new List<string>();
+        Stream source = gzipped ? new GZipStream(archive, CompressionMode.Decompress, leaveOpen: true) : archive;
         try
         {
-            // Use tar command to extract
-            var tarArgs = isGzipped ? "-xzf" : "-xf";
-            var process = new System.Diagnostics.Process
+            using var reader = new TarReader(source, leaveOpen: true);
+            TarEntry? entry;
+            while ((entry = await reader.GetNextEntryAsync(copyData: false, cancellationToken)) != null)
             {
-                StartInfo = new System.Diagnostics.ProcessStartInfo
+                if (entry.EntryType is not (TarEntryType.RegularFile or TarEntryType.V7RegularFile or TarEntryType.ContiguousFile))
                 {
-                    FileName = "tar",
-                    Arguments = $"{tarArgs} \"{tarPath}\" -C \"{tempExtractPath}\"",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
+                    continue;
                 }
-            };
 
-            process.Start();
-            await process.WaitForExitAsync(cancellationToken);
+                var fileName = Path.GetFileName(entry.Name.Replace('\\', '/'));
+                if (string.IsNullOrEmpty(fileName)
+                    || fileName is "." or ".."
+                    || !fileName.EndsWith(".jar", StringComparison.OrdinalIgnoreCase)
+                    || entry.DataStream == null)
+                {
+                    continue;
+                }
 
-            if (process.ExitCode != 0)
-            {
-                var error = await process.StandardError.ReadToEndAsync(cancellationToken);
-                _logger.LogError("Tar extraction failed: {Error}", error);
-                throw new InvalidOperationException($"Failed to extract tar archive: {error}");
-            }
-
-            // Find all JAR files in the extracted directory
-            var jarFiles = Directory.GetFiles(tempExtractPath, "*.jar", SearchOption.AllDirectories);
-            foreach (var jarFile in jarFiles)
-            {
-                var fileName = Path.GetFileName(jarFile);
-                var targetPath = Path.Combine(modsPath, fileName);
-
-                // Copy JAR to mods folder
-                File.Copy(jarFile, targetPath, overwrite: true);
-
-                // Set ownership
-                await OwnershipHelper.ChangeOwnershipAsync(
-                    targetPath,
-                    _hostOptions.RunAsUid,
-                    _hostOptions.RunAsGid,
-                    _logger,
-                    cancellationToken);
-
+                var data = entry.DataStream;
+                await WriteModFileAsync(Path.Combine(modsPath, fileName),
+                    (target, ct) => data.CopyToAsync(target, ct), cancellationToken);
                 _logger.LogInformation("Extracted JAR: {FileName}", fileName);
+                saved.Add(fileName);
             }
+
+            return saved;
+        }
+        catch (InvalidDataException ex)
+        {
+            throw new ArgumentException($"Not a valid tar archive: {ex.Message}", ex);
+        }
+        catch (FormatException ex)
+        {
+            throw new ArgumentException($"Not a valid tar archive: {ex.Message}", ex);
         }
         finally
         {
-            // Clean up temp extraction directory
-            if (Directory.Exists(tempExtractPath))
+            if (gzipped)
             {
-                Directory.Delete(tempExtractPath, recursive: true);
+                await source.DisposeAsync();
             }
         }
     }
@@ -2913,11 +2988,27 @@ public sealed class ModService : IModService
             return safeName;
 
         var newPath = Path.Combine(modsPath, newFilename);
+        if (File.Exists(newPath) || new FileInfo(newPath).LinkTarget != null)
+        {
+            // Both "x.jar" and "x.jar.disabled" exist: renaming would fail (it used to
+            // surface as a bare 500) or, with overwrite, silently drop one of them.
+            throw new InvalidOperationException(
+                $"Cannot {(enabled ? "enable" : "disable")} {safeName}: {newFilename} already exists. Delete one of the two first.");
+        }
         File.Move(filePath, newPath);
 
-        var serverPath = Path.Combine(_hostOptions.BaseDirectory, _hostOptions.ServersPathSegment, serverName);
-        await File.WriteAllTextAsync(
-            Path.Combine(serverPath, ".mineos-restart-required"), "", cancellationToken);
+        MarkRestartRequired(GetServerPath(serverName));
+
+        // The installed-mod record is keyed by file name; follow the rename so a
+        // disabled modpack mod still shows under its modpack.
+        try
+        {
+            await _modpackRepo.RenameModFileAsync(serverName, safeName, newFilename, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not update the mod record for {FileName}", safeName);
+        }
 
         _logger.LogInformation("Mod {OldName} -> {NewName} for server {Server}",
             filename, newFilename, serverName);

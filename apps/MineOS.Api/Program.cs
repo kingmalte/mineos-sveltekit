@@ -155,6 +155,8 @@ builder.Services.AddScoped<IConsoleService, ConsoleService>();
 builder.Services.AddScoped<IMonitoringService, MonitoringService>();
 builder.Services.AddScoped<IPerformanceService, PerformanceService>();
 builder.Services.AddScoped<IFileService, FileService>();
+builder.Services.AddScoped<IModAnalysisService, MineOS.Infrastructure.Services.Mods.ModAnalysisService>();
+builder.Services.AddScoped<IModUpdateService, MineOS.Infrastructure.Services.Mods.ModUpdateService>();
 builder.Services.AddScoped<IImportService, ImportService>();
 builder.Services.AddScoped<IPluginService, PluginService>();
 builder.Services.AddScoped<ICurseForgeService, CurseForgeService>();
@@ -206,7 +208,8 @@ builder.Services.AddHttpClient<IModService, ModService>(client =>
 });
 builder.Services.AddHttpClient<IModrinthService, ModrinthService>(client =>
 {
-    client.BaseAddress = new Uri("https://api.modrinth.com/v2/");
+    // Overridable for mirrors and for testing against a local stand-in.
+    client.BaseAddress = new Uri(builder.Configuration["Modrinth:BaseUrl"] ?? "https://api.modrinth.com/v2/");
     client.DefaultRequestHeaders.UserAgent.ParseAdd("MineOS/1.0");
 });
 builder.Services.AddHttpClient<CurseForgeClient>();

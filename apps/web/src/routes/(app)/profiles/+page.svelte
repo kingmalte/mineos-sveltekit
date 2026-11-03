@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SharedEventSource } from '$lib/utils/sharedEventSource';
 	import { onDestroy, onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { invalidateAll } from '$app/navigation';
@@ -26,7 +27,7 @@
 	let runsLoading = $state(false);
 	let logs = $state<string[]>([]);
 	let logContainer: HTMLDivElement | null = null;
-	let eventSource: EventSource | null = null;
+	let eventSource: SharedEventSource | null = null;
 
 	// Check for group query param on mount
 	onMount(() => {
@@ -259,7 +260,7 @@
 
 	function openStream(id: string) {
 		eventSource?.close();
-		eventSource = new EventSource(`/api/host/profiles/buildtools/runs/${id}/stream`);
+		eventSource = new SharedEventSource(`/api/host/profiles/buildtools/runs/${id}/stream`);
 
 		eventSource.onmessage = (event) => {
 			try {

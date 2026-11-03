@@ -179,6 +179,10 @@ namespace MineOS.Infrastructure.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("Command")
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
                     b.Property<long>("CreatedAt")
                         .HasColumnType("INTEGER");
 
@@ -201,6 +205,9 @@ namespace MineOS.Infrastructure.Migrations
                         .IsRequired()
                         .HasMaxLength(256)
                         .HasColumnType("TEXT");
+
+                    b.Property<int?>("WarningMinutes")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 

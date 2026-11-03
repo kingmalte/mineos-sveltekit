@@ -1,6 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createEventStream } from './eventStream';
 
+// createEventStream goes through the shared per-tab connection in the app;
+// route it to whatever EventSource the test installs on the global instead.
+vi.mock('./sharedEventSource', () => ({
+	SharedEventSource: class {
+		constructor(url: string) {
+			return new (globalThis as unknown as { EventSource: new (u: string) => object }).EventSource(url);
+		}
+	}
+}));
+
 /**
  * Minimal EventSource stand-in. createEventStream reads EventSource off
  * the global at call time, so swapping it in per-test needs no mocking

@@ -3,9 +3,17 @@ namespace MineOS.Application.Dtos;
 // Version is the LOADER's version; MinecraftVersion is the game version. They are
 // the same thing for Paper-style jars and completely different for Fabric/Quilt,
 // where "fabric-server-mc.1.21.1-loader.0.19.3.jar" is game 1.21.1, loader 0.19.3.
-public record ServerLoaderDto(string? Loader, string? Version, string? MinecraftVersion = null);
+/// <param name="IsManual">The loader was chosen by a user because detection found none.</param>
+public record ServerLoaderDto(string? Loader, string? Version, string? MinecraftVersion = null, bool IsManual = false);
 
-public record CronJobDto(string Hash, string Source, string Action, string? Msg, bool Enabled);
+public record CronJobDto(
+    string Hash,
+    string Source,
+    string Action,
+    string? Msg,
+    bool Enabled,
+    string? Command = null,
+    int? WarningMinutes = null);
 
 public record NoticeDto(
     string Uuid,
@@ -115,7 +123,12 @@ public record DeleteServerRequest(bool DeleteLive, bool DeleteBackups, bool Dele
 
 public record ActionRequest(string? Step, int? Niceness);
 
-public record CreateCronRequest(string Source, string Action, string? Msg);
+public record CreateCronRequest(
+    string Source,
+    string Action,
+    string? Msg,
+    string? Command = null,
+    int? WarningMinutes = null);
 
 public record UpdateCronRequest(bool Enabled);
 

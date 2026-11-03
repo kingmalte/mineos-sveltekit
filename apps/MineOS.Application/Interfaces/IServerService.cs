@@ -54,5 +54,11 @@ public interface IServerService
 
     // Loader detection
     Task<ServerLoaderDto> DetectLoaderAsync(string name, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Remembers which mod loader a server uses when it cannot be detected (forge,
+    /// fabric, neoforge or quilt; null clears it). Detection still wins when it finds one.
+    /// </summary>
+    Task SetLoaderOverrideAsync(string name, string? loader, CancellationToken cancellationToken);
     Task UpdateServerTypeAsync(string name, string serverType, string? proxyKind, CancellationToken cancellationToken);
 }

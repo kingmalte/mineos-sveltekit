@@ -62,5 +62,16 @@ public interface IModrinthService
         string algorithm,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// For each file hash, the newest version of the same project that matches the
+    /// given loaders and game versions. Hashes Modrinth does not know are absent.
+    /// </summary>
+    Task<IReadOnlyDictionary<string, ModrinthVersionDto>> GetLatestVersionsByFileHashesAsync(
+        IReadOnlyList<string> hashes,
+        string algorithm,
+        IReadOnlyList<string> loaders,
+        IReadOnlyList<string> gameVersions,
+        CancellationToken cancellationToken);
+
     Task<Stream> OpenDownloadStreamAsync(string url, CancellationToken cancellationToken);
 }

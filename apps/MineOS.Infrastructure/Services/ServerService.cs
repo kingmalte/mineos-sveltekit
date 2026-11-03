@@ -2840,7 +2840,84 @@ public class ServerService : IServerService
         return literal.Success ? literal.Groups["mc"].Value : null;
     }
 
+    private const string LoaderOverrideFile = ".mineos-mod-loader";
+
+    private static readonly HashSet<string> OverridableLoaders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "forge", "fabric", "neoforge", "quilt"
+    };
+
     public async Task<ServerLoaderDto> DetectLoaderAsync(string name, CancellationToken cancellationToken)
+    {
+        var detected = await DetectLoaderFromServerAsync(name, cancellationToken);
+        var serverPath = GetServerPath(name);
+
+        if (detected.Loader == null)
+        {
+            // Nothing on disk says which loader this is; use what a user picked, so
+            // every admin and browser sees the same choice (it used to live in each
+            // browser's localStorage).
+            var overridePath = Path.Combine(serverPath, LoaderOverrideFile);
+            if (File.Exists(overridePath))
+            {
+                var chosen = (await File.ReadAllTextAsync(overridePath, cancellationToken)).Trim().ToLowerInvariant();
+                if (OverridableLoaders.Contains(chosen))
+                {
+                    detected = new ServerLoaderDto(chosen, null, detected.MinecraftVersion, IsManual: true);
+                }
+            }
+        }
+
+        if (detected.MinecraftVersion == null)
+        {
+            // The jar name often does not carry the version ("server.jar"); look at
+            // what the installers leave on disk, so a stopped server still filters
+            // mod searches by its game version.
+            string? jarFile = null;
+            try
+            {
+                jarFile = (await GetServerConfigAsync(name, cancellationToken)).Java.JarFile;
+            }
+            catch (Exception ex) when (ex is IOException or FormatException or InvalidOperationException)
+            {
+                // A broken server.config should not hide the version.
+            }
+
+            var version = MinecraftVersionProbe.FromDisk(serverPath, jarFile);
+            if (version != null)
+            {
+                detected = detected with { MinecraftVersion = version };
+            }
+        }
+
+        return detected;
+    }
+
+    public async Task SetLoaderOverrideAsync(string name, string? loader, CancellationToken cancellationToken)
+    {
+        var serverPath = GetServerPath(name);
+        if (!Directory.Exists(serverPath))
+            throw new DirectoryNotFoundException($"Server '{name}' not found");
+
+        var overridePath = Path.Combine(serverPath, LoaderOverrideFile);
+        if (string.IsNullOrWhiteSpace(loader))
+        {
+            if (File.Exists(overridePath) || new FileInfo(overridePath).LinkTarget != null)
+                File.Delete(overridePath);
+            return;
+        }
+
+        if (!OverridableLoaders.Contains(loader))
+            throw new ArgumentException($"Unknown mod loader '{loader}'. Use forge, fabric, neoforge or quilt.");
+
+        await AtomicFile.WriteAsync(
+            overridePath,
+            (stream, ct) => stream.WriteAsync(System.Text.Encoding.UTF8.GetBytes(loader.ToLowerInvariant()), ct).AsTask(),
+            (temp, ct) => OwnershipHelper.ChangeOwnershipAsync(temp, _options.RunAsUid, _options.RunAsGid, _logger, ct),
+            cancellationToken);
+    }
+
+    private async Task<ServerLoaderDto> DetectLoaderFromServerAsync(string name, CancellationToken cancellationToken)
     {
         var serverPath = GetServerPath(name);
         if (!Directory.Exists(serverPath))

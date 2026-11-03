@@ -198,6 +198,45 @@ public sealed class ModrinthService : IModrinthService
         return result;
     }
 
+    public async Task<IReadOnlyDictionary<string, ModrinthVersionDto>> GetLatestVersionsByFileHashesAsync(
+        IReadOnlyList<string> hashes,
+        string algorithm,
+        IReadOnlyList<string> loaders,
+        IReadOnlyList<string> gameVersions,
+        CancellationToken cancellationToken)
+    {
+        var result = new Dictionary<string, ModrinthVersionDto>(StringComparer.OrdinalIgnoreCase);
+        if (hashes is null || hashes.Count == 0)
+        {
+            return result;
+        }
+
+        var response = await _httpClient.PostAsJsonAsync(
+            "version_files/update",
+            new { hashes, algorithm, loaders, game_versions = gameVersions },
+            cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("Modrinth update lookup returned {Status}", (int)response.StatusCode);
+            throw new HttpRequestException(
+                $"Modrinth update lookup failed ({(int)response.StatusCode})", null, response.StatusCode);
+        }
+
+        var payload = await response.Content.ReadFromJsonAsync<Dictionary<string, ModrinthVersionResponse>>(
+            JsonOptions, cancellationToken);
+
+        foreach (var (hash, version) in payload ?? new Dictionary<string, ModrinthVersionResponse>())
+        {
+            if (version is not null)
+            {
+                result[hash] = MapVersion(version);
+            }
+        }
+
+        return result;
+    }
+
     public async Task<Stream> OpenDownloadStreamAsync(string url, CancellationToken cancellationToken)
     {
         return await _httpClient.GetStreamAsync(url, cancellationToken);
@@ -264,7 +303,9 @@ public sealed class ModrinthService : IModrinthService
             file.Url,
             file.FileName,
             file.Size,
-            file.Primary)).ToList() ?? new List<ModrinthVersionFileDto>();
+            file.Primary,
+            file.Hashes != null && file.Hashes.TryGetValue("sha1", out var sha1) ? sha1 : null)).ToList()
+            ?? new List<ModrinthVersionFileDto>();
 
         var dependencies = response.Dependencies?.Select(dep => new ModrinthDependencyDto(
             dep.ProjectId,
@@ -331,7 +372,8 @@ public sealed class ModrinthService : IModrinthService
         [property: JsonPropertyName("url")] string Url,
         [property: JsonPropertyName("filename")] string FileName,
         [property: JsonPropertyName("size")] long Size,
-        [property: JsonPropertyName("primary")] bool Primary);
+        [property: JsonPropertyName("primary")] bool Primary,
+        [property: JsonPropertyName("hashes")] Dictionary<string, string>? Hashes = null);
 
     private sealed record ModrinthDependencyResponse(
         [property: JsonPropertyName("project_id")] string? ProjectId,

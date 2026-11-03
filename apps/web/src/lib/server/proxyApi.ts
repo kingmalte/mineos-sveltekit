@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/private';
 import type { RequestEvent, RequestHandler } from '@sveltejs/kit';
+import { encodePathSegments } from './upstreamPath';
 
 const baseUrl =
 	env.PRIVATE_API_BASE_URL ??
@@ -68,7 +69,7 @@ async function forward(event: RequestEvent, opts: ProxyOptions, method?: string)
 	const body = hasBody ? event.request.body : undefined;
 
 	const path = (event.params as any)[paramName] ?? '';
-	const suffix = path ? `/${path}` : '';
+	const suffix = path ? `/${encodePathSegments(path)}` : '';
 	const upstreamUrl = `${baseUrl}${opts.prefix}${suffix}${event.url.search}`;
 
 	const fetchInit: RequestInit & { duplex?: 'half' } = { method: m, headers, body };

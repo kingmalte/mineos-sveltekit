@@ -39,6 +39,28 @@ public static class AuthEndpoints
             .AllowAnonymous()
             .WithMetadata(new MineOS.Api.Middleware.SkipApiKeyAttribute());
 
+        // Renews the caller's token. JWT-only on purpose: the service API key has
+        // no user behind it, and an expired or invalid token is rejected here
+        // like anywhere else, so this extends a live session but cannot revive
+        // a dead one.
+        auth.MapPost("/refresh", async (
+                System.Security.Claims.ClaimsPrincipal user,
+                IAuthService authService,
+                CancellationToken cancellationToken) =>
+            {
+                var userIdClaim = user.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                    ?? user.Claims.FirstOrDefault(c => c.Type == JwtRegisteredClaimNames.Sub)?.Value;
+                if (!int.TryParse(userIdClaim, out var userId))
+                {
+                    return Results.Unauthorized();
+                }
+
+                var result = await authService.RefreshAsync(userId, cancellationToken);
+                return result == null ? Results.Unauthorized() : Results.Ok(result);
+            })
+            .RequireAuthorization()
+            .WithMetadata(new MineOS.Api.Middleware.SkipApiKeyAttribute());
+
         auth.MapGet("/me", async (
                 System.Security.Claims.ClaimsPrincipal user,
                 AppDbContext db,

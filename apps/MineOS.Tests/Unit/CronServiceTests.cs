@@ -57,6 +57,40 @@ public class CronServiceTests
     }
 
     [Fact]
+    public async Task CreateAsync_Stores_A_Normalized_Command_For_Command_Jobs()
+    {
+        CronJob? saved = null;
+        _repo.Setup(r => r.AddAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
+            .Callback<CronJob, CancellationToken>((job, _) => saved = job)
+            .Returns(Task.CompletedTask);
+
+        var result = await _service.CreateAsync("myserver",
+            new CreateCronRequest("0 12 * * *", " Command ", null, "  /time set day "), CancellationToken.None);
+
+        Assert.Equal("command", saved!.Action);
+        Assert.Equal("time set day", saved.Command);
+        Assert.Null(saved.WarningMinutes);
+        Assert.Equal("time set day", result.Command);
+    }
+
+    [Fact]
+    public async Task CreateAsync_Keeps_The_Warning_Only_For_Restart_And_Stop()
+    {
+        var saved = new List<CronJob>();
+        _repo.Setup(r => r.AddAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
+            .Callback<CronJob, CancellationToken>((job, _) => saved.Add(job))
+            .Returns(Task.CompletedTask);
+
+        var restart = await _service.CreateAsync("s", new CreateCronRequest("0 4 * * *", "restart", null, null, 10), CancellationToken.None);
+        await _service.CreateAsync("s", new CreateCronRequest("0 4 * * *", "restart", null, null, 0), CancellationToken.None);
+        await _service.CreateAsync("s", new CreateCronRequest("0 4 * * *", "backup", null, "say hi", 10), CancellationToken.None);
+
+        Assert.Equal(10, restart.WarningMinutes);
+        Assert.Equal(new int?[] { 10, null, null }, saved.Select(j => j.WarningMinutes));
+        Assert.Null(saved[2].Command);
+    }
+
+    [Fact]
     public async Task UpdateAsync_Returns_Null_When_Hash_Not_Found()
     {
         _repo.Setup(r => r.ToListAsync(It.IsAny<Expression<Func<CronJob, bool>>>(), It.IsAny<CancellationToken>()))

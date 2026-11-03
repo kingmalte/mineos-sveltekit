@@ -1,9 +1,11 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using MineOS.Application;
 using MineOS.Application.Dtos;
 using MineOS.Application.Interfaces;
 using MineOS.Domain.Entities;
+using ServerStatusStrings = MineOS.Infrastructure.Constants.ServerStatus;
 
 namespace MineOS.Infrastructure.Services;
 
@@ -50,24 +52,7 @@ public sealed class CronSchedulerService : IHostedService, IDisposable
     {
         try
         {
-            using var scope = _scopeFactory.CreateScope();
-            var repo = scope.ServiceProvider.GetRequiredService<IRepository<CronJob>>();
-            var jobs = await repo.ToListAsync(j => j.Enabled, CancellationToken.None);
-
-            var now = DateTimeOffset.UtcNow;
-            foreach (var job in jobs)
-            {
-                if (!CronExpressionMatcher.Matches(job.CronExpression, now))
-                    continue;
-
-                _logger.LogInformation("Cron trigger: {Action} for server {Server} (expression: {Expr})",
-                    job.Action, job.ServerName, job.CronExpression);
-
-                QueueCronAction(job);
-
-                job.LastRunAt = now;
-                await repo.UpdateAsync(job, CancellationToken.None);
-            }
+            await TickAsync(DateTimeOffset.UtcNow, CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -75,74 +60,192 @@ public sealed class CronSchedulerService : IHostedService, IDisposable
         }
     }
 
+    /// <summary>One scheduler pass: warn players about upcoming jobs, then queue the jobs due now.</summary>
+    internal async Task TickAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IRepository<CronJob>>();
+        var jobs = await repo.ToListAsync(j => j.Enabled, cancellationToken);
+
+        foreach (var job in jobs)
+        {
+            await SendDueWarningAsync(scope.ServiceProvider, job, now, cancellationToken);
+        }
+
+        foreach (var job in jobs)
+        {
+            if (!CronExpressionMatcher.Matches(job.CronExpression, now))
+                continue;
+
+            _logger.LogInformation("Cron trigger: {Action} for server {Server} (expression: {Expr})",
+                job.Action, job.ServerName, job.CronExpression);
+
+            QueueCronAction(job);
+
+            job.LastRunAt = now;
+            await repo.UpdateAsync(job, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Tells the players on a server that a restart or stop is coming, when this
+    /// minute is one of the job's warning points.
+    /// </summary>
+    private async Task SendDueWarningAsync(
+        IServiceProvider services, CronJob job, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (!CronActions.SupportsWarning(job.Action))
+            return;
+
+        // Smallest matching offset only: a job that is due again soon (e.g. every
+        // 5 minutes with a 10-minute warning) should not announce two times at once.
+        var minutesLeft = CronWarnings.Offsets(job.WarningMinutes)
+            .Where(m => CronExpressionMatcher.Matches(job.CronExpression, now.AddMinutes(m)))
+            .DefaultIfEmpty(0)
+            .Min();
+        if (minutesLeft == 0)
+            return;
+
+        try
+        {
+            await BroadcastAsync(services, job.ServerName,
+                CronWarnings.WarningText(job.Action, minutesLeft), cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            // A missed warning must not cost the other jobs their tick.
+            _logger.LogWarning(ex, "Could not warn players on {Server} about the scheduled {Action}",
+                job.ServerName, job.Action);
+        }
+    }
+
+    /// <summary>
+    /// Shows a message to everyone on a running server. Does nothing when the server
+    /// is not running or has no broadcast command (proxies).
+    /// </summary>
+    private static async Task BroadcastAsync(
+        IServiceProvider services, string serverName, string text, CancellationToken cancellationToken)
+    {
+        var serverService = services.GetRequiredService<IServerService>();
+        if (!await IsRunningAsync(serverService, serverName, cancellationToken))
+            return;
+
+        var server = await serverService.GetServerAsync(serverName, cancellationToken);
+        var command = CronWarnings.BroadcastCommand(server.ServerType, text);
+        if (command is null)
+            return;
+
+        var console = services.GetRequiredService<IConsoleService>();
+        await console.SendCommandAsync(serverName, command, cancellationToken);
+    }
+
+    private static async Task<bool> IsRunningAsync(
+        IServerService serverService, string serverName, CancellationToken cancellationToken)
+    {
+        var status = await serverService.GetServerStatusAsync(serverName, cancellationToken);
+        return status.Status == ServerStatusStrings.Running;
+    }
+
     private void QueueCronAction(CronJob job)
     {
-        switch (job.Action.ToLowerInvariant())
+        var action = CronActions.Normalize(job.Action);
+        if (!CronActions.IsValid(action))
         {
-            case "backup":
-                _jobService.QueueJob("backup", job.ServerName, async (sp, progress, ct) =>
-                {
-                    var backupService = sp.GetRequiredService<IBackupService>();
-                    progress.Report(new JobProgressDto(
-                        string.Empty, "backup", job.ServerName, "running",
-                        10, "Starting scheduled backup...", DateTimeOffset.UtcNow));
-                    await backupService.CreateBackupAsync(job.ServerName, ct);
-                    progress.Report(new JobProgressDto(
-                        string.Empty, "backup", job.ServerName, "completed",
-                        100, "Scheduled backup completed", DateTimeOffset.UtcNow));
-                });
+            _logger.LogWarning("Unknown cron action: {Action}", job.Action);
+            return;
+        }
+
+        _jobService.QueueJob(action, job.ServerName,
+            (sp, progress, ct) => RunCronActionAsync(job, sp, progress, ct));
+    }
+
+    /// <summary>The work of one scheduled job, run on the background job queue.</summary>
+    internal static async Task RunCronActionAsync(
+        CronJob job, IServiceProvider services, IProgress<JobProgressDto> progress, CancellationToken ct)
+    {
+        var action = CronActions.Normalize(job.Action);
+        var server = job.ServerName;
+        void Report(string status, int percentage, string message) =>
+            progress.Report(new JobProgressDto(
+                string.Empty, action, server, status, percentage, message, DateTimeOffset.UtcNow));
+
+        var serverService = services.GetRequiredService<IServerService>();
+
+        switch (action)
+        {
+            case CronActions.Backup:
+                var backupService = services.GetRequiredService<IBackupService>();
+                Report("running", 10, "Starting scheduled backup...");
+                await backupService.CreateBackupAsync(server, ct);
+                Report("completed", 100, "Scheduled backup completed");
                 break;
 
-            case "restart":
-                _jobService.QueueJob("restart", job.ServerName, async (sp, progress, ct) =>
+            case CronActions.Restart:
+                // A server someone stopped on purpose stays stopped; restarting it
+                // would bring back a server its owner took down.
+                if (!await IsRunningAsync(serverService, server, ct))
                 {
-                    var serverService = sp.GetRequiredService<IServerService>();
-                    progress.Report(new JobProgressDto(
-                        string.Empty, "restart", job.ServerName, "running",
-                        30, "Stopping server...", DateTimeOffset.UtcNow));
-                    await serverService.StopServerAsync(job.ServerName, 30, ct);
-                    await Task.Delay(TimeSpan.FromSeconds(5), ct);
-                    progress.Report(new JobProgressDto(
-                        string.Empty, "restart", job.ServerName, "running",
-                        70, "Starting server...", DateTimeOffset.UtcNow));
-                    await serverService.StartServerAsync(job.ServerName, ct);
-                    progress.Report(new JobProgressDto(
-                        string.Empty, "restart", job.ServerName, "completed",
-                        100, "Scheduled restart completed", DateTimeOffset.UtcNow));
-                });
+                    Report("completed", 100, "Server is not running; scheduled restart skipped");
+                    break;
+                }
+                if (job.WarningMinutes > 0)
+                    await TryBroadcastAsync(services, server, CronWarnings.NowText(action), ct);
+                Report("running", 30, "Restarting server...");
+                // One operation under the server's lifecycle gate, so nothing can
+                // start the server in the gap between stopping and starting it.
+                await serverService.RestartServerAsync(server, 30, ct);
+                Report("completed", 100, "Scheduled restart completed");
                 break;
 
-            case "start":
-                _jobService.QueueJob("start", job.ServerName, async (sp, progress, ct) =>
-                {
-                    var serverService = sp.GetRequiredService<IServerService>();
-                    progress.Report(new JobProgressDto(
-                        string.Empty, "start", job.ServerName, "running",
-                        30, "Starting server...", DateTimeOffset.UtcNow));
-                    await serverService.StartServerAsync(job.ServerName, ct);
-                    progress.Report(new JobProgressDto(
-                        string.Empty, "start", job.ServerName, "completed",
-                        100, "Scheduled start completed", DateTimeOffset.UtcNow));
-                });
+            case CronActions.Start:
+                Report("running", 30, "Starting server...");
+                await serverService.StartServerAsync(server, ct);
+                Report("completed", 100, "Scheduled start completed");
                 break;
 
-            case "stop":
-                _jobService.QueueJob("stop", job.ServerName, async (sp, progress, ct) =>
+            case CronActions.Stop:
+                if (!await IsRunningAsync(serverService, server, ct))
                 {
-                    var serverService = sp.GetRequiredService<IServerService>();
-                    progress.Report(new JobProgressDto(
-                        string.Empty, "stop", job.ServerName, "running",
-                        30, "Stopping server...", DateTimeOffset.UtcNow));
-                    await serverService.StopServerAsync(job.ServerName, 30, ct);
-                    progress.Report(new JobProgressDto(
-                        string.Empty, "stop", job.ServerName, "completed",
-                        100, "Scheduled stop completed", DateTimeOffset.UtcNow));
-                });
+                    Report("completed", 100, "Server is not running; scheduled stop skipped");
+                    break;
+                }
+                if (job.WarningMinutes > 0)
+                    await TryBroadcastAsync(services, server, CronWarnings.NowText(action), ct);
+                Report("running", 30, "Stopping server...");
+                await serverService.StopServerAsync(server, 30, ct);
+                Report("completed", 100, "Scheduled stop completed");
                 break;
 
-            default:
-                _logger.LogWarning("Unknown cron action: {Action}", job.Action);
+            case CronActions.Command:
+                if (string.IsNullOrWhiteSpace(job.Command))
+                    throw new InvalidOperationException("This scheduled command job has no command to send.");
+                if (!await IsRunningAsync(serverService, server, ct))
+                {
+                    Report("completed", 100, "Server is not running; scheduled command skipped");
+                    break;
+                }
+                var console = services.GetRequiredService<IConsoleService>();
+                await console.SendCommandAsync(server, job.Command, ct);
+                Report("completed", 100, $"Sent scheduled command: {job.Command}");
                 break;
+        }
+    }
+
+    /// <summary>A last "now" notice is a courtesy; failing to send it must not cancel the job.</summary>
+    private static async Task TryBroadcastAsync(
+        IServiceProvider services, string serverName, string text, CancellationToken ct)
+    {
+        try
+        {
+            await BroadcastAsync(services, serverName, text, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            // Ignored; see summary.
         }
     }
 }

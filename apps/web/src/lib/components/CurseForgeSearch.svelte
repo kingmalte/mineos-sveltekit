@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SharedEventSource } from '$lib/utils/sharedEventSource';
 	import { onMount, tick } from 'svelte';
 	import { modal } from '$lib/stores/modal';
 	import { extractMinecraftVersion } from '$lib/utils/version';
@@ -43,9 +44,9 @@
 
 	// In-modal install progress
 	let modpackInstallProgress = $state<ModpackInstallProgress | null>(null);
-	let modpackEventSource: EventSource | null = null;
+	let modpackEventSource: SharedEventSource | null = null;
 	let modInstallProgress = $state<any | null>(null);
-	let modEventSource: EventSource | null = null;
+	let modEventSource: SharedEventSource | null = null;
 	let outputEl = $state<HTMLDivElement | null>(null);
 
 	const classIdMap: Record<'mods' | 'modpacks', number> = {
@@ -290,7 +291,7 @@
 
 	function startModStream(jobId: string) {
 		modEventSource?.close();
-		modEventSource = new EventSource(
+		modEventSource = new SharedEventSource(
 			`/api/servers/${serverName}/mods/stream?jobId=${encodeURIComponent(jobId)}`
 		);
 
@@ -324,7 +325,7 @@
 
 	function startModpackStream(jobId: string) {
 		modpackEventSource?.close();
-		modpackEventSource = new EventSource(
+		modpackEventSource = new SharedEventSource(
 			`/api/servers/${serverName}/modpacks/install/${encodeURIComponent(jobId)}/stream`
 		);
 

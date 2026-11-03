@@ -51,6 +51,14 @@ server.on('upgrade', (req, socket, head) => {
 	if (shouldProxyWebSocket(path)) {
 		// Proxy this WebSocket to the API
 		const token = parseAuthToken(req.headers.cookie);
+		// The upstream request carries the service API key, which the API treats
+		// as admin when no user token comes with it. Never open one for a visitor
+		// who is not logged in.
+		if (!token) {
+			socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+			socket.destroy();
+			return;
+		}
 		const targetUrl = `${WS_BASE}${path}${url.search}`;
 
 		console.log(`[WS Proxy] Connecting to: ${targetUrl}`);

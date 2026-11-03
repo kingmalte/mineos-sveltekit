@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SharedEventSource } from '$lib/utils/sharedEventSource';
 	import { tick } from 'svelte';
 	import { modal } from '$lib/stores/modal';
 	import type {
@@ -40,7 +41,7 @@
 	let detailVersions = $state<ModrinthVersion[]>([]);
 	let installingVersionId = $state<string | null>(null);
 	let installProgress = $state<{ status: string; percentage: number; message?: string } | null>(null);
-	let installEventSource: EventSource | null = null;
+	let installEventSource: SharedEventSource | null = null;
 	let outputEl: HTMLDivElement | null = null;
 
 	const commonMinecraftVersions = [
@@ -218,7 +219,7 @@
 
 	function startInstallStream(jobId: string) {
 		installEventSource?.close();
-		installEventSource = new EventSource(
+		installEventSource = new SharedEventSource(
 			`/api/servers/${encodeURIComponent(serverName)}/mods/stream?jobId=${encodeURIComponent(jobId)}`
 		);
 
