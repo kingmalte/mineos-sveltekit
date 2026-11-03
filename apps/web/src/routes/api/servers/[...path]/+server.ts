@@ -26,10 +26,11 @@ export const GET: RequestHandler = (event) => {
 		});
 	}
 
+	// A file in the file manager may well be called "stream"; only API routes are streams.
+	const isFilePath = segments[1] === 'files';
 	const isStream =
 		accept.includes('text/event-stream') ||
-		path.endsWith('/stream') ||
-		path.endsWith('/streaming');
+		(!isFilePath && (path.endsWith('/stream') || path.endsWith('/streaming')));
 
 	if (isStream) {
 		return proxyEventStream(event, `/api/v1/servers/${path}`);

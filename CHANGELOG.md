@@ -10,6 +10,14 @@ Pre-releases publish `:preview` Docker images and are not intended for productio
 
 ### Added
 
+- **File manager: download, new file / folder, rename / move, copy.** Any file
+  can be downloaded (also ones too large for the editor, like big logs) and any
+  folder as a .zip built on the fly. New files open straight in the editor;
+  rename/move and copy take a full path and refuse to replace anything unless
+  asked (folders are never merged or replaced). Unsaved edits are no longer lost
+  silently: switching file or folder, cancelling or leaving the page asks first,
+  and Ctrl+S saves.
+
 - **Scheduled restarts and stops can warn players first.** A cron restart or stop
   can now announce itself in chat beforehand (1–60 minutes; counting down at the
   standard points, e.g. 10, 5, 2, 1 minutes, plus a final "restarting now"). The
@@ -55,6 +63,30 @@ Pre-releases publish `:preview` Docker images and are not intended for productio
   while the server is running, survives config edits, and clones start unlabeled (#180).
 
 ### Fixed
+
+- **Security: the file manager could reach outside the server directory and delete
+  the server itself.** Paths were checked as text only, so a symbolic link inside a
+  server folder (left by a plugin, a mod or an extracted archive) let a user with
+  *View* access read any file on the host and one with *Control* access write
+  anywhere — and the API, running as root, then chowned what it wrote to the server
+  user (including the linked directory itself, e.g. `/etc`). Links are now resolved
+  and anything that ends up outside the server is refused; deleting a link removes
+  only the link. Separately, a path such as `" "` was trimmed to `/` and a DELETE of
+  it removed the whole server directory with only *Control* access; the server
+  directory can no longer be deleted, moved or overwritten through the file manager.
+  **Upgrade recommended.**
+- **File manager writes are atomic.** Saving or uploading wrote in place, so a
+  failure part-way (disk full, dropped upload, API restart) left `server.properties`
+  or a plugin jar truncated. Files are now written next to the target and renamed
+  into place, keeping their permissions (an executable start script stays
+  executable).
+- **Uploads are streamed** instead of being held in memory twice (browser and
+  API), which could take the API down on a multi-GB world; `.json` files can be
+  uploaded again (they were parsed as an API request: 500/400).
+- **File names with `#`, `?`, `%` or spaces** open, save, download and delete
+  correctly (the web proxy re-encodes path segments).
+- Opening a folder that fails (e.g. a refused link) no longer leaves the list and
+  the current path out of step, and a folder change loads once instead of twice.
 
 - **Security: the web app no longer grants admin rights to visitors who are not
   logged in.** Its `/api` proxies send the service API key with every request,

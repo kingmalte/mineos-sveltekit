@@ -1,141 +1,214 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
+	import { beforeNavigate } from '$app/navigation';
 	import { modal } from '$lib/stores/modal';
 	import { formatBytes, formatDate } from '$lib/utils/formatting';
+	import {
+		baseName,
+		fileActionUrl,
+		fileApiUrl,
+		fileDownloadUrl,
+		joinPath,
+		normalizePath,
+		parentPath
+	} from '$lib/utils/filePaths';
 	import type { ServerPanelData } from './panelData';
 
 	let { data }: { data: ServerPanelData } = $props();
 
+	type FileEntry = { name: string; isDirectory: boolean; size: number; modified: string };
+	type DialogKind = 'new-file' | 'new-folder' | 'move' | 'copy';
+	type Dialog = {
+		kind: DialogKind;
+		source: FileEntry | null;
+		value: string;
+		overwrite: boolean;
+		error: string;
+		busy: boolean;
+	};
+
 	let currentPath = $state('/');
-	let files = $state<any[]>([]);
+	let files = $state<FileEntry[]>([]);
 	let loading = $state(false);
 	let selectedFile = $state<string | null>(null);
 	let fileContent = $state('');
+	// What the file held when it was opened or last saved; edits are compared to it.
+	let originalContent = $state('');
 	let editMode = $state(false);
 	let uploadError = $state('');
+	let dialog = $state<Dialog | null>(null);
 
+	let serverName = $derived(data.server?.name ?? null);
+	let isDirty = $derived(editMode && fileContent !== originalContent);
+
+	// Load once per server. loadFiles reads currentPath, so a plain
+	// `$effect(() => loadFiles())` re-ran on every folder change on top of the
+	// explicit load in navigateTo — two requests per click.
 	$effect(() => {
-		loadFiles();
+		const name = serverName;
+		if (!name) return;
+		untrack(() => {
+			currentPath = '/';
+			closeViewer();
+			void loadFiles();
+		});
 	});
 
-	function buildBrowseUrl(path: string) {
-		if (!data.server) return '';
-		if (path === '/' || path === '') {
-			return `/api/servers/${data.server.name}/files`;
+	// Leaving the page (or the tab) with unsaved edits asks first.
+	beforeNavigate((navigation) => {
+		if (!isDirty) return;
+		if (navigation.willUnload) {
+			// The browser shows its own "leave site?" prompt.
+			navigation.cancel();
+			return;
 		}
-		return `/api/servers/${data.server.name}/files${path}`;
+		if (!confirm(`Discard your unsaved changes to "${selectedFile}"?`)) {
+			navigation.cancel();
+		}
+	});
+
+	async function confirmDiscard(): Promise<boolean> {
+		if (!isDirty) return true;
+		return modal.confirm(
+			`You have unsaved changes to "${selectedFile}". Discard them?`,
+			'Unsaved changes'
+		);
 	}
 
-	async function loadFiles() {
-		if (!data.server) return;
+	function closeViewer() {
+		selectedFile = null;
+		fileContent = '';
+		originalContent = '';
+		editMode = false;
+	}
+
+	async function errorMessage(res: Response, fallback: string): Promise<string> {
+		const body = await res.json().catch(() => null);
+		return body?.error || body?.detail || fallback;
+	}
+
+	/**
+	 * Lists `path` and only then makes it the current folder. Switching first left
+	 * the old listing on screen under the new path when the folder could not be
+	 * opened, so every following click went to the wrong place.
+	 */
+	async function loadFiles(path: string = currentPath): Promise<boolean> {
+		if (!serverName) return false;
 		loading = true;
 		try {
-			const res = await fetch(buildBrowseUrl(currentPath));
+			const res = await fetch(fileApiUrl(serverName, path));
 			if (res.ok) {
 				const result = await res.json();
 				files = result.entries ?? [];
-			} else {
-				const error = await res.json().catch(() => ({ error: 'Failed to load files' }));
-				await modal.error(error.error || 'Failed to load files');
+				currentPath = path;
+				return true;
 			}
+			await modal.error(await errorMessage(res, 'Failed to load files'));
+			return false;
+		} catch {
+			await modal.error('Failed to load files - the server could not be reached.');
+			return false;
 		} finally {
 			loading = false;
 		}
 	}
 
-	async function navigateTo(name: string, isDirectory: boolean) {
-		if (!isDirectory) {
-			await viewFile(name);
-			return;
-		}
+	async function openFolder(path: string) {
+		if (!(await confirmDiscard())) return;
+		if (await loadFiles(path)) closeViewer();
+	}
 
-		if (currentPath === '/') {
-			currentPath = `/${name}`;
+	async function navigateTo(file: FileEntry) {
+		if (file.isDirectory) {
+			await openFolder(joinPath(currentPath, file.name));
 		} else {
-			currentPath = `${currentPath}/${name}`;
+			await viewFile(file.name);
 		}
-		selectedFile = null;
-		editMode = false;
-		await loadFiles();
 	}
 
 	async function navigateUp() {
 		if (currentPath === '/') return;
-
-		const parts = currentPath.split('/').filter(p => p);
-		parts.pop();
-		currentPath = parts.length === 0 ? '/' : '/' + parts.join('/');
-		selectedFile = null;
-		editMode = false;
-		await loadFiles();
+		await openFolder(parentPath(currentPath));
 	}
 
 	async function viewFile(name: string) {
-		if (!data.server) return;
+		if (!serverName) return;
+		if (name !== selectedFile && !(await confirmDiscard())) return;
 		loading = true;
 		try {
-			const filePath = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
-			const res = await fetch(buildBrowseUrl(filePath));
+			const res = await fetch(fileApiUrl(serverName, joinPath(currentPath, name)));
 			if (res.ok) {
 				const result = await res.json();
 				if (result.kind === 'file' && result.file) {
 					fileContent = result.file.content ?? '';
+					originalContent = fileContent;
 					selectedFile = name;
 					editMode = false;
 				} else {
 					await modal.error('Selected path is not a file');
 				}
 			} else {
-				const error = await res.json().catch(() => ({ error: 'Failed to read file' }));
-				await modal.error(error.error || 'Failed to read file');
+				await modal.error(await errorMessage(res, 'Failed to read file'));
 			}
 		} finally {
 			loading = false;
 		}
 	}
 
+	async function cancelEdit() {
+		if (!(await confirmDiscard())) return;
+		fileContent = originalContent;
+		editMode = false;
+	}
+
 	async function saveFile() {
-		if (!data.server || !selectedFile) return;
+		if (!serverName || !selectedFile) return;
 		loading = true;
 		try {
-			const filePath = currentPath === '/' ? `/${selectedFile}` : `${currentPath}/${selectedFile}`;
-			const res = await fetch(buildBrowseUrl(filePath), {
+			const res = await fetch(fileApiUrl(serverName, joinPath(currentPath, selectedFile)), {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ content: fileContent })
 			});
 			if (res.ok) {
-				await modal.success('File saved successfully');
+				originalContent = fileContent;
 				editMode = false;
+				await loadFiles();
 			} else {
-				const error = await res.json().catch(() => ({ error: 'Failed to save file' }));
-				await modal.error(error.error || 'Failed to save file');
+				await modal.error(await errorMessage(res, 'Failed to save file'));
 			}
 		} finally {
 			loading = false;
 		}
 	}
 
-	async function deleteFile(name: string) {
-		if (!data.server) return;
-		const confirmed = await modal.confirm(`Are you sure you want to delete "${name}"?`, 'Delete File');
+	function onEditorKeydown(event: KeyboardEvent) {
+		if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+			event.preventDefault();
+			if (editMode && !loading) void saveFile();
+		}
+	}
+
+	async function deleteFile(file: FileEntry) {
+		if (!serverName) return;
+		const what = file.isDirectory ? 'folder' : 'file';
+		const extra = file.isDirectory ? ' and everything in it' : '';
+		const confirmed = await modal.confirm(
+			`Delete the ${what} "${file.name}"${extra}? This cannot be undone.`,
+			`Delete ${what}`
+		);
 		if (!confirmed) return;
 
 		loading = true;
 		try {
-			const filePath = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
-			const res = await fetch(buildBrowseUrl(filePath), {
+			const res = await fetch(fileApiUrl(serverName, joinPath(currentPath, file.name)), {
 				method: 'DELETE'
 			});
 			if (res.ok) {
+				if (selectedFile === file.name) closeViewer();
 				await loadFiles();
-				if (selectedFile === name) {
-					selectedFile = null;
-					fileContent = '';
-					editMode = false;
-				}
 			} else {
-				const error = await res.json().catch(() => ({ error: 'Failed to delete' }));
-				await modal.error(error.error || 'Failed to delete');
+				await modal.error(await errorMessage(res, 'Failed to delete'));
 			}
 		} finally {
 			loading = false;
@@ -143,7 +216,7 @@
 	}
 
 	async function uploadFile(event: Event) {
-		if (!data.server) return;
+		if (!serverName) return;
 		const input = event.target as HTMLInputElement;
 		const file = input.files?.[0];
 		if (!file) return;
@@ -151,28 +224,105 @@
 		uploadError = '';
 		loading = true;
 		try {
-			const filePath = currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`;
-			const buffer = await file.arrayBuffer();
-			const res = await fetch(buildBrowseUrl(filePath), {
+			// The File itself is the body, so the browser streams it instead of
+			// reading it all into memory first. Always octet-stream: the API reads a
+			// JSON content type as {content: ...}, which broke uploading .json files.
+			const res = await fetch(fileApiUrl(serverName, joinPath(currentPath, file.name)), {
 				method: 'POST',
-				headers: {
-					'Content-Type': file.type || 'application/octet-stream'
-				},
-				body: buffer
+				headers: { 'Content-Type': 'application/octet-stream' },
+				body: file
 			});
 
 			if (res.ok) {
 				await loadFiles();
-				input.value = '';
 			} else {
-				const error = await res.json().catch(() => ({ error: 'Failed to upload file' }));
-				uploadError = error.error || 'Failed to upload file';
+				uploadError = await errorMessage(res, 'Failed to upload file');
 			}
+		} catch {
+			uploadError = 'Upload failed - the connection was interrupted.';
 		} finally {
+			input.value = '';
 			loading = false;
 		}
 	}
 
+	const dialogTitles: Record<DialogKind, string> = {
+		'new-file': 'New file',
+		'new-folder': 'New folder',
+		move: 'Rename / move',
+		copy: 'Copy'
+	};
+
+	async function openDialog(kind: DialogKind, source: FileEntry | null = null) {
+		// Moving the open file away under unsaved edits would lose them on save.
+		if (kind === 'move' && source && source.name === selectedFile && !(await confirmDiscard())) {
+			return;
+		}
+		let value = '';
+		if (source) {
+			const full = joinPath(currentPath, source.name);
+			value = kind === 'copy' ? `${full}${source.isDirectory ? '-copy' : ''}` : full;
+		}
+		dialog = { kind, source, value, overwrite: false, error: '', busy: false };
+	}
+
+	async function submitDialog(event: SubmitEvent) {
+		event.preventDefault();
+		if (!dialog || !serverName) return;
+		const d = dialog;
+		const raw = d.value.trim();
+		if (!raw) {
+			d.error = 'Please enter a name or path.';
+			return;
+		}
+
+		let url: string;
+		let body: Record<string, unknown>;
+		let createdPath: string | null = null;
+		if (d.kind === 'new-file' || d.kind === 'new-folder') {
+			// Relative to the open folder unless it starts with "/".
+			createdPath = raw.startsWith('/') ? normalizePath(raw) : normalizePath(joinPath(currentPath, raw));
+			url = fileActionUrl(serverName, d.kind === 'new-file' ? 'create-file' : 'create-folder');
+			body = { path: createdPath };
+		} else {
+			const from = joinPath(currentPath, d.source!.name);
+			const to = normalizePath(raw);
+			if (to === from) {
+				dialog = null;
+				return;
+			}
+			url = fileActionUrl(serverName, d.kind);
+			body = { from, to, overwrite: d.overwrite };
+		}
+
+		d.busy = true;
+		d.error = '';
+		try {
+			const res = await fetch(url, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			});
+			if (!res.ok) {
+				d.error = await errorMessage(res, 'That did not work.');
+				return;
+			}
+		} catch {
+			d.error = 'The request failed - please try again.';
+			return;
+		} finally {
+			d.busy = false;
+		}
+
+		dialog = null;
+		if (d.kind === 'move' && d.source?.name === selectedFile) closeViewer();
+		await loadFiles();
+		// A new file in this folder opens straight in the editor.
+		if (d.kind === 'new-file' && createdPath && parentPath(createdPath) === currentPath) {
+			await viewFile(baseName(createdPath));
+			editMode = true;
+		}
+	}
 </script>
 
 <div class="file-browser">
@@ -184,11 +334,25 @@
 			<span class="path">{currentPath}</span>
 		</div>
 		<div class="toolbar-actions">
+			<button onclick={() => openDialog('new-file')} class="btn" disabled={!serverName}>New file</button>
+			<button onclick={() => openDialog('new-folder')} class="btn" disabled={!serverName}>
+				New folder
+			</button>
 			<label class="btn upload-btn">
 				<input type="file" onchange={uploadFile} hidden />
 				Upload
 			</label>
-			<button onclick={loadFiles} disabled={loading} class="btn">
+			{#if serverName}
+				<a
+					class="btn"
+					href={fileDownloadUrl(serverName, currentPath)}
+					download
+					title="Download this folder as a .zip"
+				>
+					Download folder
+				</a>
+			{/if}
+			<button onclick={() => loadFiles()} disabled={loading} class="btn">
 				{loading ? 'Loading...' : 'Refresh'}
 			</button>
 		</div>
@@ -214,27 +378,79 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#each files as file}
+						{#each files as file (file.name)}
 							<tr class:selected={selectedFile === file.name}>
 								<td>
 									<button
 										class="file-name"
-										onclick={() => navigateTo(file.name, file.isDirectory)}
+										onclick={() => navigateTo(file)}
+										title={file.isDirectory ? 'Open folder' : 'Open file'}
 									>
 										{file.isDirectory ? '📁' : '📄'} {file.name}
 									</button>
 								</td>
 								<td>{file.isDirectory ? '-' : formatBytes(file.size)}</td>
-								<td>{formatDate(file.modified)}</td>
-								<td>
-									{#if !file.isDirectory}
-										<button onclick={() => viewFile(file.name)} class="btn-small">View</button>
+								<td class="date">{formatDate(file.modified)}</td>
+								<td class="row-actions">
+									{#if serverName}
+										<a
+											class="btn-small icon-button"
+											href={fileDownloadUrl(serverName, joinPath(currentPath, file.name))}
+											download
+											title={file.isDirectory ? 'Download as .zip' : 'Download'}
+											aria-label={file.isDirectory ? `Download ${file.name} as .zip` : `Download ${file.name}`}
+										>
+											<svg viewBox="0 0 24 24" aria-hidden="true">
+												<path
+													d="M12 4v11M7 10l5 5 5-5M5 20h14"
+													fill="none"
+													stroke="currentColor"
+													stroke-width="1.8"
+													stroke-linecap="round"
+													stroke-linejoin="round"
+												/>
+											</svg>
+										</a>
 									{/if}
 									<button
-										onclick={() => deleteFile(file.name)}
+										onclick={() => openDialog('move', file)}
+										class="btn-small icon-button"
+										title="Rename / move"
+										aria-label={`Rename or move ${file.name}`}
+									>
+										<svg viewBox="0 0 24 24" aria-hidden="true">
+											<path
+												d="M4 20h4l10-10-4-4L4 16v4zM14 6l4 4"
+												fill="none"
+												stroke="currentColor"
+												stroke-width="1.8"
+												stroke-linecap="round"
+												stroke-linejoin="round"
+											/>
+										</svg>
+									</button>
+									<button
+										onclick={() => openDialog('copy', file)}
+										class="btn-small icon-button"
+										title="Copy"
+										aria-label={`Copy ${file.name}`}
+									>
+										<svg viewBox="0 0 24 24" aria-hidden="true">
+											<path
+												d="M9 9h10v11H9zM5 15V4h10"
+												fill="none"
+												stroke="currentColor"
+												stroke-width="1.8"
+												stroke-linecap="round"
+												stroke-linejoin="round"
+											/>
+										</svg>
+									</button>
+									<button
+										onclick={() => deleteFile(file)}
 										class="btn-small btn-danger icon-button"
-										title="Delete file"
-										aria-label="Delete file"
+										title={file.isDirectory ? 'Delete folder' : 'Delete file'}
+										aria-label={`Delete ${file.name}`}
 									>
 										<svg viewBox="0 0 24 24" aria-hidden="true">
 											<path
@@ -259,10 +475,35 @@
 		{#if selectedFile}
 			<div class="file-viewer">
 				<div class="viewer-toolbar">
-					<h3>{selectedFile}</h3>
-					<div>
+					<h3>
+						{selectedFile}
+						{#if isDirty}
+							<span class="dirty-badge" title="Unsaved changes">● unsaved</span>
+						{/if}
+					</h3>
+					<div class="viewer-actions">
+						{#if serverName}
+							<a
+								class="btn-small icon-button"
+								href={fileDownloadUrl(serverName, joinPath(currentPath, selectedFile))}
+								download
+								title="Download"
+								aria-label={`Download ${selectedFile}`}
+							>
+								<svg viewBox="0 0 24 24" aria-hidden="true">
+									<path
+										d="M12 4v11M7 10l5 5 5-5M5 20h14"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.8"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+									/>
+								</svg>
+							</a>
+						{/if}
 						{#if editMode}
-							<button onclick={() => (editMode = false)} class="btn-small">Cancel</button>
+							<button onclick={cancelEdit} class="btn-small">Cancel</button>
 							<button onclick={saveFile} class="btn-small btn-primary" disabled={loading}>
 								Save
 							</button>
@@ -292,11 +533,60 @@
 					readonly={!editMode}
 					class="file-content"
 					class:editable={editMode}
+					onkeydown={onEditorKeydown}
+					spellcheck="false"
 				></textarea>
+				{#if editMode}
+					<p class="editor-hint">Ctrl+S saves.</p>
+				{/if}
 			</div>
 		{/if}
 	</div>
 </div>
+
+{#if dialog}
+	<div class="dialog-backdrop" role="presentation" onclick={(e) => e.target === e.currentTarget && !dialog?.busy && (dialog = null)}>
+		<form class="dialog" onsubmit={submitDialog} aria-labelledby="file-dialog-title">
+			<h3 id="file-dialog-title">
+				{dialogTitles[dialog.kind]}{dialog.source ? ` "${dialog.source.name}"` : ''}
+			</h3>
+			<label>
+				<span class="label-text">
+					{#if dialog.kind === 'new-file' || dialog.kind === 'new-folder'}
+						Name (in {currentPath})
+					{:else}
+						New path (from the server folder)
+					{/if}
+				</span>
+				<!-- svelte-ignore a11y_autofocus -->
+				<input
+					type="text"
+					bind:value={dialog.value}
+					spellcheck="false"
+					autofocus
+					placeholder={dialog.kind === 'new-folder' ? 'my-folder' : dialog.kind === 'new-file' ? 'config.yml' : ''}
+				/>
+			</label>
+			{#if (dialog.kind === 'move' || dialog.kind === 'copy') && !dialog.source?.isDirectory}
+				<label class="checkbox">
+					<input type="checkbox" bind:checked={dialog.overwrite} />
+					<span>Replace an existing file at that path</span>
+				</label>
+			{/if}
+			{#if dialog.error}
+				<p class="error">{dialog.error}</p>
+			{/if}
+			<div class="dialog-actions">
+				<button type="button" class="btn" onclick={() => (dialog = null)} disabled={dialog.busy}>
+					Cancel
+				</button>
+				<button type="submit" class="btn btn-primary" disabled={dialog.busy}>
+					{dialog.busy ? 'Working...' : dialogTitles[dialog.kind]}
+				</button>
+			</div>
+		</form>
+	</div>
+{/if}
 
 <style>
 	.file-browser {
@@ -592,6 +882,119 @@
 	.upload-btn {
 		display: inline-flex;
 		align-items: center;
+	}
+
+	a.btn,
+	a.btn-small {
+		text-decoration: none;
+		display: inline-flex;
+		align-items: center;
+	}
+
+	.toolbar-actions {
+		flex-wrap: wrap;
+	}
+
+	.row-actions {
+		white-space: nowrap;
+	}
+
+	.row-actions > * + * {
+		margin-left: 0.2rem;
+	}
+
+	td.date {
+		font-size: 0.85rem;
+		color: var(--mc-text-muted, #9aa2c5);
+	}
+
+	.viewer-actions {
+		display: flex;
+		gap: 0.4rem;
+		align-items: center;
+	}
+
+	.dirty-badge {
+		margin-left: 0.5rem;
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--color-warning, #ffd54f);
+		vertical-align: middle;
+	}
+
+	.editor-hint {
+		margin: 0.4rem 0 0;
+		font-size: 0.75rem;
+		color: var(--mc-text-dim, #7c87b2);
+	}
+
+	.dialog-backdrop {
+		position: fixed;
+		inset: 0;
+		background: rgba(5, 7, 15, 0.65);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 16px;
+		z-index: 1000;
+	}
+
+	.dialog {
+		width: min(460px, 100%);
+		background: var(--mc-panel, #1a1e2f);
+		border: 1px solid var(--border-color, #2a2f47);
+		border-radius: 12px;
+		padding: 1.25rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.9rem;
+		box-shadow: 0 20px 40px rgba(0, 0, 0, 0.45);
+	}
+
+	.dialog h3 {
+		margin: 0;
+		color: var(--mc-text, #eef0f8);
+		overflow-wrap: anywhere;
+	}
+
+	.dialog label {
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+	}
+
+	.dialog .label-text {
+		font-size: 0.8rem;
+		color: var(--mc-text-muted, #9aa2c5);
+	}
+
+	.dialog input[type='text'] {
+		background: var(--mc-panel-darkest, #0d1117);
+		border: 1px solid var(--border-color, #2a2f47);
+		border-radius: 8px;
+		padding: 0.6rem 0.75rem;
+		color: var(--mc-text, #eef0f8);
+		font-family: 'Courier New', 'Consolas', monospace;
+		font-size: 0.9rem;
+	}
+
+	.dialog input[type='text']:focus {
+		outline: none;
+		border-color: var(--mc-grass, #6ab04c);
+	}
+
+	.dialog .checkbox {
+		flex-direction: row;
+		align-items: center;
+		gap: 0.5rem;
+		font-size: 0.85rem;
+		color: var(--mc-text-muted, #9aa2c5);
+	}
+
+	.dialog-actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: 0.5rem;
 	}
 
 	@media (max-width: 900px) {
