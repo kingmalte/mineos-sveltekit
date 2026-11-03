@@ -10,6 +10,21 @@ Pre-releases publish `:preview` Docker images and are not intended for productio
 
 ### Added
 
+- **Mods page: compatibility check.** MineOS reads each mod's own metadata
+  (fabric.mod.json, quilt.mod.json, mods.toml - including the jars nested inside
+  them, such as Fabric API's modules) and lists what will stop the server from
+  starting: client-only mods, missing required dependencies (or ones that are
+  disabled), the same mod installed twice, and mods for another loader. Client-only
+  mods get a one-click "Move to client mods"; uploading one asks right away.
+- **Mods page: updates.** "Check for updates" asks Modrinth about every installed
+  jar (matched by file hash, for the server's loader and Minecraft version) and
+  updates one or all mods; downloads are checked against Modrinth's checksum and
+  swapped in atomically, keeping the modpack association. The Modrinth API URL can
+  be overridden with `Modrinth:BaseUrl`.
+- **Mods page: chosen loader is stored on the server.** When the loader cannot be
+  detected, the choice is saved for the server (it lived in each browser's
+  localStorage), and can be changed or re-detected.
+
 - **File manager: download, new file / folder, rename / move, copy.** Any file
   can be downloaded (also ones too large for the editor, like big logs) and any
   folder as a .zip built on the fly. New files open straight in the editor;
@@ -63,6 +78,36 @@ Pre-releases publish `:preview` Docker images and are not intended for productio
   while the server is running, survives config edits, and clones start unlabeled (#180).
 
 ### Fixed
+
+- **Security: a mod upload could read any file on the host.** A `.tar`/`.tar.gz`
+  mod upload was unpacked with `tar` as root and every `*.jar` in it copied with a
+  call that follows symbolic links, so an archive holding `x.jar -> /any/file` put
+  that file in the mods folder, where anyone with *View* access could download it.
+  Archives are now read with .NET's TarReader and only regular files are written;
+  links and hard links are ignored. Mod downloads refuse a jar that links outside
+  the mods folder, a mods folder that links out of the server is refused, and
+  modpack/override extraction resolves symbolic links before writing (the same
+  class of bug as the file manager's). Uploading *requires Control* as before.
+  **Upgrade recommended.**
+- **Mod files are written atomically.** Uploads, extracted jars and downloads used
+  to overwrite in place (a running server could crash on a jar changing under it,
+  and a failed download left a truncated jar); they now replace the file in one
+  step. A broken `.zip` upload is a 400, not a 500.
+- **Mods page shows why something failed.** Enabling/disabling a mod failed
+  silently (and with both `x.jar` and `x.jar.disabled` present it was a bare 500,
+  now a 409 explaining it); upload errors show the API's message instead of
+  "Bad Request". Disabling a modpack mod no longer detaches it from its modpack.
+- **Mod searches filter by Minecraft version on stopped servers.** The version came
+  only from pinging the running server; it is now read from the server's files
+  (the jar name, `version.json` in the vanilla jar, Forge/NeoForge libraries, the
+  Fabric cache).
+- **Mod changes while the server runs.** Deleting and uninstalling were blocked
+  while uploading and toggling were not; all are allowed now (the writes are
+  atomic) and a banner says a restart is needed, with a restart button.
+- **"Delete All" mods is one request**, validated up front, instead of one request
+  per mod that could stop half way.
+- `client-mods/` and its `source-map.json` are owned by the server user (they were
+  left root-owned).
 
 - **Security: the file manager could reach outside the server directory and delete
   the server itself.** Paths were checked as text only, so a symbolic link inside a

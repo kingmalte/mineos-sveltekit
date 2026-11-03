@@ -7,6 +7,18 @@ public interface IModService
     Task<IReadOnlyList<InstalledModDto>> ListModsAsync(string serverName, CancellationToken cancellationToken);
     Task<IReadOnlyList<InstalledModWithModpackDto>> ListModsWithModpacksAsync(string serverName, CancellationToken cancellationToken);
     Task SaveModAsync(string serverName, string fileName, Stream content, CancellationToken cancellationToken);
+
+    /// <summary>Like <see cref="SaveModAsync"/>, returning the jar files written.</summary>
+    Task<IReadOnlyList<string>> SaveModFilesAsync(string serverName, string fileName, Stream content, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Deletes several mods in one call. Every name is validated before anything is
+    /// deleted; files that cannot be deleted are reported, not thrown.
+    /// </summary>
+    Task<ModDeleteBatchResultDto> DeleteModsAsync(string serverName, IReadOnlyList<string> fileNames, CancellationToken cancellationToken);
+
+    /// <summary>Moves a mod from the server's mods folder to its client-only mods.</summary>
+    Task MoveModToClientAsync(string serverName, string fileName, CancellationToken cancellationToken);
     Task DeleteModAsync(string serverName, string fileName, CancellationToken cancellationToken);
     Task<string> GetModPathAsync(string serverName, string fileName, CancellationToken cancellationToken);
     Task InstallModFromCurseForgeAsync(

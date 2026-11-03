@@ -1,0 +1,622 @@
+/*
+ * Shared styles for the server mods page and its components
+ * (src/lib/components/mods/*). Everything is scoped under .mods-page, the page
+ * root, so the split-out components keep the page's look without each carrying
+ * its own copy - and nothing here reaches outside the page.
+ */
+.mods-page {
+	display: flex;
+	flex-direction: column;
+	gap: 24px;
+}
+
+.mods-page .page-header h2 {
+	margin: 0 0 4px;
+	font-size: 24px;
+	font-weight: 600;
+}
+
+.mods-page .subtitle {
+	margin: 0;
+	color: #aab2d3;
+	font-size: 14px;
+}
+
+.mods-page .section-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: flex-start;
+	gap: 12px;
+	flex-wrap: wrap;
+}
+
+.mods-page .section-header h3 {
+	margin: 0;
+}
+
+.mods-page .section-actions {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+}
+
+.mods-page .subsection {
+	background: #141827;
+	border-radius: 12px;
+	padding: 16px;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.mods-page .subsection h4 {
+	margin: 0;
+	font-size: 15px;
+	font-weight: 600;
+}
+
+.mods-page .upload-drop {
+	border: 2px dashed #2a2f47;
+	border-radius: 16px;
+	padding: 18px;
+	text-align: center;
+	color: #9aa2c5;
+	background: rgba(20, 24, 39, 0.6);
+	transition: border-color 0.2s, background 0.2s, color 0.2s;
+}
+
+.mods-page .upload-drop.active {
+	border-color: #7ae68d;
+	background: rgba(122, 230, 141, 0.08);
+	color: #d4f5dc;
+}
+
+.mods-page .drop-content strong {
+	color: #eef0f8;
+}
+
+.mods-page .upload-button {
+	background: var(--mc-grass);
+	color: white;
+	border-radius: 8px;
+	padding: 10px 20px;
+	font-size: 14px;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.mods-page .upload-button input {
+	display: none;
+}
+
+.mods-page .mods-section {
+	background: #1a1e2f;
+	border-radius: 16px;
+	padding: 20px;
+	box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35);
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.mods-page .client-mods-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 12px;
+}
+
+.mods-page .upload-button.small {
+	padding: 6px 14px;
+	font-size: 13px;
+}
+
+
+.mods-page .mod-list table {
+	width: 100%;
+	border-collapse: collapse;
+}
+
+.mods-page th,
+.mods-page td {
+	padding: 12px 16px;
+	text-align: left;
+	border-bottom: 1px solid #2a2f47;
+}
+
+.mods-page th {
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.12em;
+	color: #8890b1;
+	font-weight: 600;
+}
+
+.mods-page td {
+	color: #eef0f8;
+}
+
+.mods-page .server-mods-details summary {
+	cursor: pointer;
+	list-style: none;
+	user-select: none;
+}
+
+.mods-page .server-mods-details summary::-webkit-details-marker {
+	display: none;
+}
+
+.mods-page .server-mods-details summary h4 {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	margin: 0;
+	font-size: 15px;
+	font-weight: 600;
+}
+
+.mods-page .server-mods-details summary h4::before {
+	content: '\25B6';
+	font-size: 10px;
+	color: #8890b1;
+	transition: transform 0.2s;
+}
+
+.mods-page .server-mods-details[open] summary h4::before {
+	transform: rotate(90deg);
+}
+
+.mods-page .mod-count {
+	font-weight: 400;
+	color: #8890b1;
+	font-size: 14px;
+}
+
+.mods-page .modpack-mod td {
+	opacity: 0.55;
+}
+
+.mods-page .modpack-mod:hover td {
+	opacity: 0.85;
+}
+
+.mods-page .source-badge {
+	font-size: 11px;
+	padding: 2px 8px;
+	border-radius: 4px;
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.mods-page .source-badge.modpack {
+	background: rgba(138, 118, 255, 0.15);
+	color: #b0a0ff;
+}
+
+.mods-page .source-badge.manual {
+	background: rgba(255, 255, 255, 0.06);
+	color: #8890b1;
+}
+
+.mods-page .actions {
+	display: flex;
+	gap: 8px;
+}
+
+.mods-page .btn-action {
+	background: #2b2f45;
+	color: #d4d9f1;
+	border: none;
+	border-radius: 6px;
+	padding: 6px 14px;
+	font-family: inherit;
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+	text-decoration: none;
+}
+
+.mods-page .btn-action.danger {
+	background: rgba(255, 92, 92, 0.2);
+	color: #ff9f9f;
+}
+
+.mods-page .btn-action:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.mods-page .disabled {
+	opacity: 0.6;
+}
+
+.mods-page .muted {
+	color: #8890b1;
+	margin: 0;
+}
+
+.mods-page .modpack-list {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.mods-page .modpack-card {
+	background: #141827;
+	border-radius: 12px;
+	padding: 16px;
+	border: 1px solid #2a2f47;
+}
+
+.mods-page .modpack-header {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+}
+
+.mods-page .modpack-logo {
+	width: 48px;
+	height: 48px;
+	border-radius: 8px;
+	object-fit: cover;
+	background: #1a1f33;
+}
+
+.mods-page .modpack-logo-placeholder {
+	width: 48px;
+	height: 48px;
+	border-radius: 8px;
+	background: #1a1f33;
+}
+
+.mods-page .modpack-info {
+	flex: 1;
+}
+
+.mods-page .modpack-info h4 {
+	margin: 0 0 4px;
+	font-size: 16px;
+}
+
+.mods-page .modpack-meta {
+	margin: 0;
+	color: #8890b1;
+	font-size: 13px;
+}
+
+.mods-page .modpack-meta .separator {
+	margin: 0 6px;
+	opacity: 0.5;
+}
+
+.mods-page .modpack-mods {
+	margin-top: 12px;
+	padding-top: 12px;
+	border-top: 1px solid #2a2f47;
+}
+
+.mods-page .modpack-mods summary {
+	cursor: pointer;
+	color: #9aa2c5;
+	font-size: 13px;
+	margin-bottom: 8px;
+}
+
+.mods-page .mod-file-list {
+	list-style: none;
+	padding: 0;
+	margin: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	max-height: 200px;
+	overflow-y: auto;
+}
+
+.mods-page .mod-file-list li {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding: 6px 8px;
+	border-radius: 6px;
+	background: #0d0f16;
+	font-size: 12px;
+}
+
+.mods-page .mod-file-list li.disabled {
+	opacity: 0.5;
+}
+
+.mods-page .mod-file-list .mod-name {
+	color: #d4d9f1;
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.mods-page .mod-file-list .mod-size {
+	color: #8890b1;
+	margin-left: 12px;
+	flex-shrink: 0;
+}
+
+.mods-page .delete-all-btn {
+	background: rgba(255, 92, 92, 0.15);
+	color: #ff9f9f;
+	border: 1px solid rgba(255, 92, 92, 0.3);
+	border-radius: 8px;
+	padding: 6px 14px;
+	font-size: 13px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: all 0.2s;
+}
+
+.mods-page .delete-all-btn:hover:not(:disabled) {
+	background: rgba(255, 92, 92, 0.25);
+}
+
+.mods-page .delete-all-btn:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.mods-page .upload-progress-container {
+	background: #1a1e2f;
+	border-radius: 12px;
+	padding: 16px 20px;
+	box-shadow: 0 10px 20px rgba(0, 0, 0, 0.25);
+}
+
+.mods-page .progress-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 12px;
+}
+
+.mods-page .progress-title {
+	color: #eef0f8;
+	font-size: 14px;
+	font-weight: 600;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	flex: 1;
+}
+
+.mods-page .progress-message {
+	margin: 8px 0 0;
+	color: #9aa2c5;
+	font-size: 13px;
+	font-style: italic;
+}
+
+.mods-page .format-selector {
+	display: flex;
+	gap: 8px;
+}
+
+.mods-page .format-btn {
+	background: #2b2f45;
+	color: #9aa2c5;
+	border: 1px solid #2a2f47;
+	border-radius: 8px;
+	padding: 8px 16px;
+	font-family: inherit;
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.2s;
+}
+
+.mods-page .format-btn.active {
+	background: rgba(90, 107, 255, 0.2);
+	color: #a4b0ff;
+	border-color: #5a6bff;
+}
+
+.mods-page .toggle-options {
+	background: none;
+	border: none;
+	color: #8890b1;
+	font-family: inherit;
+	font-size: 13px;
+	cursor: pointer;
+	padding: 0;
+	text-decoration: underline;
+	text-underline-offset: 3px;
+	align-self: flex-start;
+}
+
+.mods-page .toggle-options:hover {
+	color: #d4d9f1;
+}
+
+.mods-page .package-options {
+	background: #0d0f16;
+	border-radius: 12px;
+	padding: 16px;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.mods-page .option-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.mods-page .option-row label {
+	width: 140px;
+	flex-shrink: 0;
+	font-size: 13px;
+	color: #9aa2c5;
+}
+
+.mods-page .option-row input,
+.mods-page .option-row select {
+	flex: 1;
+	background: #0d0f16;
+	border: 1px solid #2a2f47;
+	border-radius: 6px;
+	padding: 8px 12px;
+	color: #eef0f8;
+	font-family: inherit;
+	font-size: 13px;
+}
+
+.mods-page .option-row select {
+	cursor: pointer;
+}
+
+.mods-page .generate-btn {
+	align-self: flex-start;
+	padding: 10px 20px;
+	font-size: 14px;
+	font-weight: 600;
+	background: var(--mc-grass);
+	color: white;
+}
+
+.mods-page .format-badge {
+	display: inline-block;
+	padding: 3px 8px;
+	border-radius: 4px;
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+
+.mods-page .format-badge.curseforge {
+	background: rgba(241, 100, 54, 0.2);
+	color: #f1a472;
+}
+
+.mods-page .format-badge.mrpack {
+	background: rgba(30, 200, 100, 0.2);
+	color: #7ae68d;
+}
+
+.mods-page .loader-banner {
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 12px;
+	padding: 12px 20px;
+	background: rgba(22, 27, 46, 0.9);
+	border: 1px solid rgba(42, 47, 71, 0.8);
+	border-radius: 12px;
+	margin-bottom: 16px;
+}
+
+.mods-page .loader-banner-info {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.mods-page .loader-banner.loading {
+	color: #8890b1;
+	font-style: italic;
+}
+
+.mods-page .loader-logo {
+	width: 28px;
+	height: 28px;
+	object-fit: contain;
+}
+
+.mods-page .loader-name {
+	font-weight: 600;
+	font-size: 16px;
+	color: #eef0f8;
+}
+
+.mods-page .loader-version {
+	color: #8890b1;
+	font-size: 14px;
+}
+
+.mods-page .loader-picker {
+	padding: 24px;
+	background: rgba(22, 27, 46, 0.9);
+	border: 1px solid rgba(42, 47, 71, 0.8);
+	border-radius: 12px;
+	margin-bottom: 16px;
+	text-align: center;
+}
+
+.mods-page .loader-picker h3 { margin: 0 0 8px; font-size: 18px; }
+.mods-page .loader-picker p { margin: 0 0 20px; color: #8890b1; font-size: 14px; }
+
+.mods-page .loader-options {
+	display: flex;
+	gap: 16px;
+	justify-content: center;
+	flex-wrap: wrap;
+}
+
+.mods-page .loader-option {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 8px;
+	padding: 16px 24px;
+	background: rgba(30, 36, 58, 0.8);
+	border: 1px solid rgba(62, 69, 100, 0.6);
+	border-radius: 12px;
+	color: #cdd3ee;
+	cursor: pointer;
+	transition: all 0.2s;
+	font-size: 14px;
+	font-weight: 500;
+}
+
+.mods-page .loader-option:hover {
+	border-color: var(--mc-grass);
+	background: rgba(106, 176, 76, 0.1);
+}
+
+.mods-page .mod-toggle {
+	position: relative;
+	display: inline-block;
+	width: 36px;
+	height: 20px;
+	flex-shrink: 0;
+}
+
+.mods-page .mod-toggle input { opacity: 0; width: 0; height: 0; }
+
+.mods-page .toggle-slider {
+	position: absolute;
+	inset: 0;
+	background: #2a2f47;
+	border-radius: 20px;
+	cursor: pointer;
+	transition: background 0.2s;
+}
+
+.mods-page .toggle-slider::before {
+	content: '';
+	position: absolute;
+	height: 14px;
+	width: 14px;
+	left: 3px;
+	bottom: 3px;
+	background: #8890b1;
+	border-radius: 50%;
+	transition: transform 0.2s, background 0.2s;
+}
+
+.mods-page .mod-toggle input:checked + .toggle-slider {
+	background: rgba(106, 176, 76, 0.3);
+}
+
+.mods-page .mod-toggle input:checked + .toggle-slider::before {
+	transform: translateX(16px);
+	background: var(--mc-grass);
+}

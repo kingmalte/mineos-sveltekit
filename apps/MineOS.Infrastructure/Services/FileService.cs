@@ -164,30 +164,7 @@ public sealed class FileService : IFileService
         var directory = Path.GetDirectoryName(target)!;
         await EnsureDirectoryAsync(serverRoot, directory, cancellationToken);
 
-        var temp = Path.Combine(directory, $".{Path.GetFileName(target)}.{Guid.NewGuid():N}.mineos-tmp");
-        try
-        {
-            await using (var stream = new FileStream(
-                temp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true))
-            {
-                await writeContent(stream, cancellationToken);
-                await stream.FlushAsync(cancellationToken);
-                stream.Flush(flushToDisk: true);
-            }
-
-            if (File.Exists(target) && !OperatingSystem.IsWindows())
-            {
-                File.SetUnixFileMode(temp, File.GetUnixFileMode(target));
-            }
-            await ChownAsync(temp, cancellationToken);
-
-            File.Move(temp, target, overwrite: true);
-        }
-        catch
-        {
-            TryDelete(temp);
-            throw;
-        }
+        await AtomicFile.WriteAsync(target, writeContent, ChownAsync, cancellationToken);
 
         _logger.LogInformation("Wrote file {Path} for server {ServerName}", path, serverName);
     }
@@ -501,16 +478,4 @@ public sealed class FileService : IFileService
 
     private Task ChownAsync(string path, CancellationToken cancellationToken) =>
         OwnershipHelper.ChangeOwnershipAsync(path, _hostOptions.RunAsUid, _hostOptions.RunAsGid, _logger, cancellationToken);
-
-    private void TryDelete(string path)
-    {
-        try
-        {
-            File.Delete(path);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Could not remove temporary file {Path}", path);
-        }
-    }
 }
