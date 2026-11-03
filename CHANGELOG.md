@@ -10,6 +10,22 @@ Pre-releases publish `:preview` Docker images and are not intended for productio
 
 ### Added
 
+- **Scheduled restarts and stops can warn players first.** A cron restart or stop
+  can now announce itself in chat beforehand (1–60 minutes; counting down at the
+  standard points, e.g. 10, 5, 2, 1 minutes, plus a final "restarting now"). The
+  job still runs at its scheduled time — the warnings go out before it, from the
+  scheduler, so they never hold up the background job queue. Proxies are not
+  warned (Velocity has no broadcast command). A scheduled restart or stop of a
+  server that is already stopped is now skipped instead of failing, and the
+  restart runs as one operation under the server's lifecycle lock.
+- **Scheduled console commands.** A new cron action, *Command*, sends one console
+  command on a schedule (`say …`, `save-all`, `time set day`, …); it is skipped
+  while the server is offline. **Permissions:** creating one requires *Console*
+  access to the server — the same as the Console tab — not just the *Control*
+  access other scheduled tasks need. Commands are single-line (line breaks and
+  control characters are rejected) and go through the same escaped `screen
+  -X stuff` path as the console.
+
 - **Server software updates** (#83). Servers running vanilla, Paper, Bedrock,
   Velocity, or BungeeCord are compared against the profile catalog MineOS already
   fetches: an "Update available" chip appears on the server page and the servers
