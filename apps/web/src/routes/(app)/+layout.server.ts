@@ -1,4 +1,4 @@
-import { redirect } from '@sveltejs/kit';
+import { error, redirect } from '@sveltejs/kit';
 import type { LayoutServerLoad } from './$types';
 import * as api from '$lib/api/client';
 
@@ -9,22 +9,27 @@ export const load: LayoutServerLoad = async ({ cookies, fetch, url }) => {
 		throw redirect(303, '/login');
 	}
 
-	let user = null;
+	let meResponse: Response;
 	try {
-		const meResponse = await fetch('/api/auth/me');
-		if (meResponse.ok) {
-			user = await meResponse.json();
-		} else if (meResponse.status === 401 || meResponse.status === 403) {
-			throw redirect(303, '/login');
-		}
+		meResponse = await fetch('/api/auth/me');
 	} catch {
-		// Network/API error - redirect to login
-		throw redirect(303, '/login');
+		// The API is unreachable (restarting, network blip). That says nothing
+		// about the session, so show an error the user can retry instead of
+		// sending them to /login — which bounces a still-valid cookie straight
+		// back here and loops.
+		throw error(503, 'The MineOS API is not reachable right now. Please try again in a moment.');
 	}
 
-	if (!user) {
-		// Could not get user info, force re-login
+	if (meResponse.status === 401 || meResponse.status === 403) {
 		throw redirect(303, '/login');
+	}
+	if (!meResponse.ok) {
+		throw error(503, 'The MineOS API is not reachable right now. Please try again in a moment.');
+	}
+
+	const user = await meResponse.json().catch(() => null);
+	if (!user) {
+		throw error(503, 'The MineOS API returned an unexpected response.');
 	}
 
 	if (url.pathname.startsWith('/profiles/buildtools')) {

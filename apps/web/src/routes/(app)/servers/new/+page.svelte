@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SharedEventSource } from '$lib/utils/sharedEventSource';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
 	import * as api from '$lib/api/client';
@@ -428,7 +429,7 @@
 	function waitForInstall(statusUrl: string): Promise<void> {
 		return new Promise((resolve, reject) => {
 			const streamUrl = statusUrl + '/stream';
-			const source = new EventSource(streamUrl);
+			const source = new SharedEventSource(streamUrl);
 			const timeout = setTimeout(() => {
 				source.close();
 				// If we're still waiting, check status one last time

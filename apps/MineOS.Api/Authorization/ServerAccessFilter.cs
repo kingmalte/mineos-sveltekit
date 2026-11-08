@@ -101,6 +101,36 @@ public sealed class ServerAccessFilter : IEndpointFilter
         return ServerPermission.Control;
     }
 
+    /// <summary>
+    /// The same check the filter makes, for an endpoint whose required permission
+    /// depends on the request body rather than the route (e.g. a cron job that
+    /// sends console commands needs Console, though creating cron jobs needs Control).
+    /// </summary>
+    internal static async Task<bool> HasServerPermissionAsync(
+        HttpContext httpContext, string serverName, ServerPermission permission)
+    {
+        var user = httpContext.User;
+        if (user?.Identity?.IsAuthenticated != true)
+        {
+            return false;
+        }
+
+        var role = user.FindFirstValue(ClaimTypes.Role) ?? "user";
+        if (string.Equals(role, "admin", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (!TryGetUserId(user, out var userId))
+        {
+            return false;
+        }
+
+        var accessService = httpContext.RequestServices.GetRequiredService<IServerAccessService>();
+        var access = await accessService.GetAccessAsync(userId, serverName, httpContext.RequestAborted);
+        return access != null && HasPermission(access, permission);
+    }
+
     private static bool HasPermission(Application.Dtos.ServerAccessDto access, ServerPermission permission)
     {
         return permission switch

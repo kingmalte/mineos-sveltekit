@@ -35,6 +35,7 @@ public static class ModEndpoints
             string name,
             HttpRequest request,
             IModService modService,
+            IModAnalysisService analysis,
             CancellationToken cancellationToken) =>
         {
             try
@@ -49,8 +50,8 @@ public static class ModEndpoints
                     }
 
                     await using var stream = file.OpenReadStream();
-                    await modService.SaveModAsync(name, file.FileName, stream, cancellationToken);
-                    return Results.Ok(new { message = $"Uploaded mod '{file.FileName}'" });
+                    var saved = await modService.SaveModFilesAsync(name, file.FileName, stream, cancellationToken);
+                    return Results.Ok(await UploadResultAsync(name, file.FileName, saved, analysis, cancellationToken));
                 }
 
                 var fileName = request.Query["filename"].ToString();
@@ -59,11 +60,8 @@ public static class ModEndpoints
                     return Results.BadRequest(new { error = "Missing filename query parameter" });
                 }
 
-                await using var buffer = new MemoryStream();
-                await request.Body.CopyToAsync(buffer, cancellationToken);
-                buffer.Position = 0;
-                await modService.SaveModAsync(name, fileName, buffer, cancellationToken);
-                return Results.Ok(new { message = $"Uploaded mod '{fileName}'" });
+                var savedFiles = await modService.SaveModFilesAsync(name, fileName, request.Body, cancellationToken);
+                return Results.Ok(await UploadResultAsync(name, fileName, savedFiles, analysis, cancellationToken));
             }
             catch (DirectoryNotFoundException ex)
             {
@@ -72,6 +70,136 @@ public static class ModEndpoints
             catch (ArgumentException ex)
             {
                 return Results.BadRequest(new { error = ex.Message });
+            }
+            catch (InvalidDataException ex)
+            {
+                // A corrupt or truncated .zip used to end as a bare 500.
+                return Results.BadRequest(new { error = $"The archive could not be read: {ex.Message}" });
+            }
+        });
+
+        // Delete several mods in one request (was one DELETE per mod from the browser,
+        // which left a half-done state when it stopped part-way).
+        servers.MapPost("/{name}/mods/delete-batch", async (
+            string name,
+            [FromBody] ModDeleteBatchRequest request,
+            IModService modService,
+            CancellationToken cancellationToken) =>
+        {
+            if (request.FileNames is not { Count: > 0 })
+            {
+                return Results.BadRequest(new { error = "fileNames is required" });
+            }
+            try
+            {
+                return Results.Ok(await modService.DeleteModsAsync(name, request.FileNames, cancellationToken));
+            }
+            catch (DirectoryNotFoundException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        });
+
+        // Compatibility check over the jars' own metadata.
+        servers.MapGet("/{name}/mods/check", async (
+            string name,
+            IModAnalysisService analysis,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                return Results.Ok(await analysis.CheckAsync(name, cancellationToken));
+            }
+            catch (DirectoryNotFoundException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        });
+
+        // Newer versions of installed mods, from Modrinth.
+        servers.MapGet("/{name}/mods/updates", async (
+            string name,
+            IModUpdateService updates,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                return Results.Ok(await updates.CheckAsync(name, cancellationToken));
+            }
+            catch (DirectoryNotFoundException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Conflict(new { error = ex.Message });
+            }
+            catch (HttpRequestException ex)
+            {
+                return Results.Json(new { error = $"Modrinth could not be reached: {ex.Message}" },
+                    statusCode: StatusCodes.Status502BadGateway);
+            }
+        });
+
+        servers.MapPost("/{name}/mods/{filename}/update", async (
+            string name,
+            string filename,
+            IModUpdateService updates,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                return Results.Ok(await updates.UpdateAsync(name, filename, cancellationToken));
+            }
+            catch (Exception ex) when (ex is DirectoryNotFoundException or FileNotFoundException)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Conflict(new { error = ex.Message });
+            }
+            catch (HttpRequestException ex)
+            {
+                return Results.Json(new { error = $"The download failed: {ex.Message}" },
+                    statusCode: StatusCodes.Status502BadGateway);
+            }
+        });
+
+        servers.MapPost("/{name}/mods/{filename}/move-to-client", async (
+            string name,
+            string filename,
+            IModService modService,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                await modService.MoveModToClientAsync(name, filename, cancellationToken);
+                return Results.Ok(new { message = $"Moved '{filename}' to client mods" });
+            }
+            catch (Exception ex) when (ex is DirectoryNotFoundException or FileNotFoundException)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Conflict(new { error = ex.Message });
             }
         });
 
@@ -398,6 +526,10 @@ public static class ModEndpoints
                 var newFilename = await modService.SetModEnabledAsync(name, filename, true, cancellationToken);
                 return Results.Ok(new { filename = newFilename, enabled = true });
             }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Conflict(new { error = ex.Message });
+            }
             catch (FileNotFoundException ex)
             {
                 return Results.NotFound(new { error = ex.Message });
@@ -422,6 +554,10 @@ public static class ModEndpoints
             {
                 var newFilename = await modService.SetModEnabledAsync(name, filename, false, cancellationToken);
                 return Results.Ok(new { filename = newFilename, enabled = false });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Conflict(new { error = ex.Message });
             }
             catch (FileNotFoundException ex)
             {
@@ -711,7 +847,8 @@ public static class ModEndpoints
                 {
                     loader = result.Loader,
                     version = result.Version,
-                    minecraftVersion = result.MinecraftVersion
+                    minecraftVersion = result.MinecraftVersion,
+                    manual = result.IsManual
                 });
             }
             catch (DirectoryNotFoundException ex)
@@ -721,6 +858,36 @@ public static class ModEndpoints
             catch (Exception)
             {
                 return Results.Ok(new { loader = (string?)null, version = (string?)null });
+            }
+        });
+
+        // Remember the loader for a server whose loader cannot be detected. A PUT, so
+        // ServerAccessFilter requires Control.
+        servers.MapPut("/{name}/loader", async (
+            string name,
+            [FromBody] LoaderOverrideRequest request,
+            IServerService serverService,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                await serverService.SetLoaderOverrideAsync(name, request.Loader, cancellationToken);
+                var result = await serverService.DetectLoaderAsync(name, cancellationToken);
+                return Results.Ok(new
+                {
+                    loader = result.Loader,
+                    version = result.Version,
+                    minecraftVersion = result.MinecraftVersion,
+                    manual = result.IsManual
+                });
+            }
+            catch (DirectoryNotFoundException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
             }
         });
 
@@ -745,6 +912,37 @@ public static class ModEndpoints
     }
 
     private record UpdateServerTypeRequest(string ServerType, string? ProxyKind = null);
+    private record ModDeleteBatchRequest(IReadOnlyList<string>? FileNames);
+
+    /// <summary>
+    /// The upload answer, flagging client-only mods so the page can offer to move them
+    /// before the next start crashes on them.
+    /// </summary>
+    private static async Task<object> UploadResultAsync(
+        string serverName,
+        string uploadedName,
+        IReadOnlyList<string> saved,
+        IModAnalysisService analysis,
+        CancellationToken cancellationToken)
+    {
+        IReadOnlyList<string> clientOnly = Array.Empty<string>();
+        try
+        {
+            clientOnly = await analysis.FindClientOnlyAsync(serverName, saved, cancellationToken);
+        }
+        catch (Exception ex) when (ex is IOException or ArgumentException)
+        {
+            // The upload itself worked; the hint is optional.
+        }
+
+        return new
+        {
+            message = $"Uploaded mod '{uploadedName}'",
+            savedFiles = saved,
+            clientOnlyFiles = clientOnly
+        };
+    }
+    private record LoaderOverrideRequest(string? Loader);
 
     /// <summary>
     /// Resolves the mod loader and Minecraft version for a server.

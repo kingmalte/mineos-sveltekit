@@ -1,3 +1,4 @@
+import { SharedEventSource } from '$lib/utils/sharedEventSource';
 import type {
 	ApiResult,
 	HostMetrics,
@@ -746,7 +747,7 @@ export function streamModpackInstall(
 	onError: (error: string) => void,
 	onComplete: () => void
 ): () => void {
-	const eventSource = new EventSource(`/api/servers/${serverName}/modpacks/install/${jobId}/stream`);
+	const eventSource = new SharedEventSource(`/api/servers/${serverName}/modpacks/install/${jobId}/stream`);
 
 	eventSource.onmessage = (event) => {
 		try {

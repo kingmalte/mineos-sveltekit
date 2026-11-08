@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SharedEventSource } from '$lib/utils/sharedEventSource';
 	import { onMount } from 'svelte';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { env } from '$env/dynamic/public';
@@ -50,7 +51,7 @@
 	let importJobs = $state<
 		Record<string, { jobId: string; status: string; percentage: number; message?: string | null }>
 	>({});
-	const importStreams = new Map<string, EventSource>();
+	const importStreams = new Map<string, SharedEventSource>();
 	let jobsInterval: ReturnType<typeof setInterval> | null = null;
 	const IMPORT_JOBS_STORAGE_KEY = 'mineos-import-jobs';
 	const IMPORTED_SERVERS_STORAGE_KEY = 'mineos-imported-servers';
@@ -339,7 +340,7 @@
 		importJobs = { ...importJobs };
 		saveImportJobsToStorage();
 
-		const source = new EventSource(`/api/jobs/${encodeURIComponent(jobId)}/stream`);
+		const source = new SharedEventSource(`/api/jobs/${encodeURIComponent(jobId)}/stream`);
 		importStreams.set(jobId, source);
 
 		source.onmessage = (event) => {

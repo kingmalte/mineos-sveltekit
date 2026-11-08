@@ -756,15 +756,25 @@ public static class ServerEndpoints
         cron.MapGet("/", async (string name, ICronService cronService, CancellationToken ct) =>
             Results.Ok(await cronService.ListAsync(name, ct)));
 
-        cron.MapPost("/", async (string name, CreateCronRequest request, ICronService cronService, CancellationToken ct) =>
+        cron.MapPost("/", async (string name, CreateCronRequest request, HttpContext http, ICronService cronService, CancellationToken ct) =>
         {
-            if (!CronActions.IsValid(request.Action))
+            var validationError = CronActions.Validate(request);
+            if (validationError != null)
             {
-                return Results.BadRequest(new
-                {
-                    error = $"Unknown cron action '{request.Action}'. Valid actions: {string.Join(", ", CronActions.All)}"
-                });
+                return Results.BadRequest(new { error = validationError });
             }
+
+            // A command job types into the server console on a schedule, so it needs
+            // the same Console permission as the console itself; the filter only
+            // checked Control (any POST here).
+            if (CronActions.Normalize(request.Action) == CronActions.Command
+                && !await ServerAccessFilter.HasServerPermissionAsync(http, name, ServerPermission.Console))
+            {
+                return Results.Json(
+                    new { error = "Scheduling console commands requires console access to this server." },
+                    statusCode: StatusCodes.Status403Forbidden);
+            }
+
             var dto = await cronService.CreateAsync(name, request, ct);
             return Results.Created($"/api/v1/servers/{name}/cron/{dto.Hash}", dto);
         });

@@ -366,6 +366,7 @@ public sealed class AppDbContext : DbContext
             entity.Property(x => x.CronExpression).HasMaxLength(128);
             entity.Property(x => x.Action).HasMaxLength(64);
             entity.Property(x => x.Message).HasMaxLength(256);
+            entity.Property(x => x.Command).HasMaxLength(1024);
 
             var timestampConverter = new ValueConverter<DateTimeOffset, long>(
                 value => value.ToUnixTimeSeconds(),

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SharedEventSource } from '$lib/utils/sharedEventSource';
 	import { onMount } from 'svelte';
 	import '@xterm/xterm/css/xterm.css';
 	import type { ServerPanelData } from './panelData';
@@ -24,9 +25,9 @@
 	let serverFitAddon: FitAddonType | null = null;
 	let javaFitAddon: FitAddonType | null = null;
 	let crashFitAddon: FitAddonType | null = null;
-	let serverEventSource: EventSource | null = null;
-	let javaEventSource: EventSource | null = null;
-	let crashEventSource: EventSource | null = null;
+	let serverEventSource: SharedEventSource | null = null;
+	let javaEventSource: SharedEventSource | null = null;
+	let crashEventSource: SharedEventSource | null = null;
 	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 	let resizeObserver: ResizeObserver | null = null;
 	let terminalCtor: TerminalCtor | null = null;
@@ -163,7 +164,7 @@
 
 		existing?.close();
 
-		const eventSource = new EventSource(`/api/servers/${encodeURIComponent(data.server.name)}/console/stream?source=${source}`);
+		const eventSource = new SharedEventSource(`/api/servers/${encodeURIComponent(data.server.name)}/console/stream?source=${source}`);
 		if (tab === 'java') {
 			javaEventSource = eventSource;
 		} else if (tab === 'crash') {

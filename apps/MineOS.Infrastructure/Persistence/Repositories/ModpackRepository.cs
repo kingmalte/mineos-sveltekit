@@ -34,6 +34,24 @@ public sealed class ModpackRepository : IModpackRepository
             .ToListAsync(ct);
     }
 
+    public async Task RenameModFileAsync(
+        string serverName, string oldFileName, string newFileName, CancellationToken ct)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var records = await db.InstalledModRecords
+            .Where(r => r.ServerName == serverName && r.FileName == oldFileName)
+            .ToListAsync(ct);
+        if (records.Count == 0)
+        {
+            return;
+        }
+        foreach (var record in records)
+        {
+            record.FileName = newFileName;
+        }
+        await db.SaveChangesAsync(ct);
+    }
+
     public async Task<InstalledModpack?> GetModpackWithModsAsync(
         int modpackId, string serverName, CancellationToken ct)
     {

@@ -11,6 +11,8 @@
 		action: string;
 		msg: string | null;
 		enabled: boolean;
+		command?: string | null;
+		warningMinutes?: number | null;
 	}
 
 	let jobs = $state<CronJob[]>([]);
@@ -23,6 +25,9 @@
 	let customCron = $state('0 3 * * *');
 	let action = $state('backup');
 	let message = $state('');
+	let command = $state('');
+	// Minutes of in-game warning before a restart/stop; 0 = none.
+	let warningMinutes = $state(5);
 	// How schedule interpretations are displayed; expressions stay UTC.
 	let timeMode = $state<CronTimeMode>('local');
 
@@ -47,14 +52,36 @@
 		backup: { label: 'Backup', description: 'Create an incremental server backup' },
 		restart: { label: 'Restart', description: 'Stop and restart the server' },
 		start: { label: 'Start', description: 'Start the server if it is not running' },
-		stop: { label: 'Stop', description: 'Gracefully stop the server' }
+		stop: { label: 'Stop', description: 'Gracefully stop the server' },
+		command: {
+			label: 'Command',
+			description: 'Send a console command, as if typed in the console (skipped while the server is offline)'
+		}
 	};
+
+	const warningOptions = [
+		{ value: 0, label: 'No warning' },
+		{ value: 1, label: '1 minute before' },
+		{ value: 5, label: '5 minutes before' },
+		{ value: 10, label: '10 minutes before' },
+		{ value: 15, label: '15 minutes before' },
+		{ value: 30, label: '30 minutes before' }
+	];
+
+	const supportsWarning = (a: string) => a === 'restart' || a === 'stop';
+	// Velocity has no broadcast command, so proxies cannot be warned in chat.
+	let isProxy = $derived(data.server?.serverType === 'proxy');
+
+	function warningLabel(minutes: number) {
+		return minutes === 1 ? '1 min' : `${minutes} min`;
+	}
 
 	const actionIcons: Record<string, string> = {
 		backup: '💾',
 		restart: '🔄',
 		start: '▶️',
-		stop: '⏹️'
+		stop: '⏹️',
+		command: '⌨️'
 	};
 
 	let effectiveCron = $derived(
@@ -103,6 +130,18 @@
 			return;
 		}
 
+		const trimmedCommand = command.trim().replace(/^\/\s*/, '');
+		if (action === 'command') {
+			if (!trimmedCommand) {
+				formError = 'Please enter the command to send.';
+				return;
+			}
+			if (/[\r\n]/.test(command)) {
+				formError = 'One command per task — line breaks are not allowed.';
+				return;
+			}
+		}
+
 		creating = true;
 		try {
 			const res = await fetch(`/api/servers/${data.server.name}/cron`, {
@@ -111,7 +150,9 @@
 				body: JSON.stringify({
 					source: cron,
 					action,
-					msg: message.trim() || null
+					msg: message.trim() || null,
+					command: action === 'command' ? trimmedCommand : null,
+					warningMinutes: supportsWarning(action) && !isProxy ? warningMinutes : null
 				})
 			});
 
@@ -120,6 +161,7 @@
 				formError = error.error || error.detail || 'Failed to create scheduled task';
 			} else {
 				message = '';
+				command = '';
 				await loadJobs();
 			}
 		} finally {
@@ -222,6 +264,45 @@
 				<p class="help-text">{actions[action]?.description}</p>
 			</label>
 
+			{#if action === 'command'}
+				<label>
+					<span class="label-text">Command</span>
+					<input
+						type="text"
+						bind:value={command}
+						placeholder="say Daily reset in 10 minutes!"
+						spellcheck="false"
+						maxlength="1024"
+						required
+					/>
+					<p class="help-text">
+						Sent to the console exactly like the Console tab, without the leading <code>/</code>.
+						Requires console access to this server.
+					</p>
+				</label>
+			{/if}
+
+			{#if supportsWarning(action)}
+				<label>
+					<span class="label-text">Warn players</span>
+					{#if isProxy}
+						<p class="help-text">
+							Proxies have no broadcast command, so players are not warned in chat.
+						</p>
+					{:else}
+						<select bind:value={warningMinutes}>
+							{#each warningOptions as option (option.value)}
+								<option value={option.value}>{option.label}</option>
+							{/each}
+						</select>
+						<p class="help-text">
+							Announced in chat counting down (e.g. 10, 5, 2, 1 minutes); the {action} still
+							happens at the scheduled time.
+						</p>
+					{/if}
+				</label>
+			{/if}
+
 			<label>
 				<span class="label-text">Schedule</span>
 				<select bind:value={schedulePreset}>
@@ -287,15 +368,24 @@
 								<span class="job-action" class:backup={job.action === 'backup'}
 									class:restart={job.action === 'restart'}
 									class:start={job.action === 'start'}
-									class:stop={job.action === 'stop'}>
+									class:stop={job.action === 'stop'}
+									class:command={job.action === 'command'}>
 									{actionIcons[job.action] ?? '⚙️'}
 									{job.action}
 								</span>
 								<code class="job-cron">{job.source}</code>
+								{#if job.warningMinutes}
+									<span class="job-badge warning-badge" title="Players are warned in chat beforehand">
+										📢 {warningLabel(job.warningMinutes)} warning
+									</span>
+								{/if}
 								{#if !job.enabled}
 									<span class="job-badge disabled-badge">Paused</span>
 								{/if}
 							</div>
+							{#if job.command}
+								<code class="job-command">/{job.command}</code>
+							{/if}
 							<div class="job-meta">
 								<span class="job-schedule">{describeCron(job.source, timeMode)}</span>
 								{#if job.msg}
@@ -332,7 +422,8 @@
 		<h3>How Cron Schedules Work</h3>
 		<ul>
 			<li><strong>Backup:</strong> Creates an incremental backup using rdiff-backup. Safe to run while the server is online.</li>
-			<li><strong>Restart:</strong> Gracefully stops the server, waits 5 seconds, then starts it again.</li>
+			<li><strong>Restart:</strong> Gracefully stops the server and starts it again. With a warning, players are told in chat beforehand. A server that is already stopped stays stopped.</li>
+			<li><strong>Command:</strong> Sends one console command (e.g. <code>say</code>, <code>save-all</code>, <code>time set day</code>). Skipped while the server is offline.</li>
 			<li><strong>Timezone:</strong> Cron expressions always run in UTC. The Local time/UTC toggle only changes how schedules are described, not when they run.</li>
 			<li><strong>Schedule:</strong> Tasks are checked every minute. Use presets or enter a standard 5-field cron expression.</li>
 		</ul>
@@ -465,7 +556,8 @@
 	}
 
 	.action-options {
-		display: flex;
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
 		gap: 10px;
 	}
 
@@ -634,6 +726,31 @@
 		border: 1px solid rgba(248, 113, 113, 0.3);
 	}
 
+	.job-action.command {
+		background: rgba(250, 204, 21, 0.12);
+		color: #fde68a;
+		border: 1px solid rgba(250, 204, 21, 0.3);
+	}
+
+	.job-command {
+		display: block;
+		margin-bottom: 6px;
+		background: rgba(20, 24, 39, 0.8);
+		padding: 4px 8px;
+		border-radius: 6px;
+		font-size: 12px;
+		color: #eef0f8;
+		border: 1px solid #2a2f47;
+		overflow-wrap: anywhere;
+	}
+
+	.warning-badge {
+		background: rgba(91, 158, 255, 0.12);
+		color: #a5b4fc;
+		border: 1px solid rgba(91, 158, 255, 0.3);
+		text-transform: none;
+	}
+
 	.job-cron {
 		background: rgba(20, 24, 39, 0.8);
 		padding: 2px 8px;
@@ -789,6 +906,14 @@
 		color: #c4cff5;
 	}
 
+	.info-card code {
+		background: rgba(20, 24, 39, 0.8);
+		padding: 1px 5px;
+		border-radius: 4px;
+		font-size: 12px;
+		color: #9aa2c5;
+	}
+
 	.cron-ref {
 		display: flex;
 		flex-direction: column;
@@ -856,7 +981,7 @@
 		}
 
 		.action-options {
-			flex-direction: column;
+			grid-template-columns: 1fr 1fr;
 		}
 
 		.schedule-preview {

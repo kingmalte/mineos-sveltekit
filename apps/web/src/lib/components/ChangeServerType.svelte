@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SharedEventSource } from '$lib/utils/sharedEventSource';
 	import { invalidateAll } from '$app/navigation';
 	import StatusBadge from './StatusBadge.svelte';
 	import ProgressBar from './ProgressBar.svelte';
@@ -199,7 +200,7 @@
 				if (result.error) throw new Error(result.error);
 				if (result.data) {
 					// Stream progress
-					const source = new EventSource(`/api/forge/install/${result.data.installId}/stream`);
+					const source = new SharedEventSource(`/api/forge/install/${result.data.installId}/stream`);
 					source.onmessage = (event) => {
 						const data = JSON.parse(event.data);
 						installProgress = data.progress ?? 0;
@@ -231,7 +232,7 @@
 				const result = await api.installFabric(fetch, mcVersion, stableLoader, serverName);
 				if (result.error) throw new Error(result.error);
 				if (result.data) {
-					const source = new EventSource(`/api/fabric/install/${result.data.installId}/stream`);
+					const source = new SharedEventSource(`/api/fabric/install/${result.data.installId}/stream`);
 					source.onmessage = (event) => {
 						const data = JSON.parse(event.data);
 						installProgress = data.progress ?? 0;

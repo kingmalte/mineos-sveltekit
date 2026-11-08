@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Logging;
+using MineOS.Application;
 using MineOS.Application.Dtos;
 using MineOS.Application.Interfaces;
 using MineOS.Domain.Entities;
@@ -26,19 +27,28 @@ public sealed class CronService : ICronService
 
     public async Task<CronJobDto> CreateAsync(string serverName, CreateCronRequest request, CancellationToken ct)
     {
+        var action = CronActions.Normalize(request.Action);
         var entity = new CronJob
         {
             ServerName = serverName,
             CronExpression = request.Source,
-            Action = request.Action,
+            Action = action,
             Message = request.Msg,
+            // Each field only means something for its own action; store nothing
+            // otherwise so a job never carries a command it will not send.
+            Command = action == CronActions.Command && request.Command is not null
+                ? CronActions.NormalizeCommand(request.Command)
+                : null,
+            WarningMinutes = CronActions.SupportsWarning(action) && request.WarningMinutes > 0
+                ? request.WarningMinutes
+                : null,
             Enabled = true,
             CreatedAt = DateTimeOffset.UtcNow
         };
 
         await _repo.AddAsync(entity, ct);
         _logger.LogInformation("Created cron job {Id} for server {Server}: {Expression} -> {Action}",
-            entity.Id, serverName, request.Source, request.Action);
+            entity.Id, serverName, request.Source, action);
 
         return ToDto(entity);
     }
@@ -76,5 +86,6 @@ public sealed class CronService : ICronService
     }
 
     private static CronJobDto ToDto(CronJob job) =>
-        new(ComputeHash(job), job.CronExpression, job.Action, job.Message, job.Enabled);
+        new(ComputeHash(job), job.CronExpression, job.Action, job.Message, job.Enabled,
+            job.Command, job.WarningMinutes);
 }

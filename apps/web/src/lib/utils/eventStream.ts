@@ -1,3 +1,4 @@
+import { SharedEventSource } from './sharedEventSource';
 /**
  * Options for creating an event stream
  */
@@ -31,7 +32,7 @@ export interface EventStreamHandle {
 	/** Close the event stream */
 	close: () => void;
 	/** The underlying EventSource (for advanced use); tracks reconnections */
-	readonly source: EventSource;
+	readonly source: SharedEventSource;
 }
 
 /**
@@ -63,8 +64,8 @@ export function createEventStream<T>(options: EventStreamOptions<T>): EventStrea
 	let source = connect();
 	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-	function connect(): EventSource {
-		const s = new EventSource(url);
+	function connect(): SharedEventSource {
+		const s = new SharedEventSource(url);
 
 		s.onmessage = (event) => {
 			try {
